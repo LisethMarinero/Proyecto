@@ -1,0 +1,7 @@
+cdsapi
+pandas
+sqlalchemy
+psycopg2-binary
+python-dotenv
+xarray
+netCDF4
