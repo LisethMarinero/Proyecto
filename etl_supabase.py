@@ -4,10 +4,8 @@ import cdsapi
 import pandas as pd
 import xarray as xr
 from sqlalchemy import create_engine
-from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timedelta, timezone
 import pytz
-
 
 # --- CONFIGURACIÓN ---
 os.environ["CDSAPI_URL"] = "https://cds.climate.copernicus.eu/api"
@@ -35,10 +33,6 @@ def crear_engine():
 
 # --- DETERMINAR ÚLTIMO DÍA DISPONIBLE ---
 def obtener_ultimo_dia_disponible(max_dias=10):
-    """
-    Intenta encontrar la fecha más reciente con datos disponibles en ERA5-Land.
-    Retrocede hasta 10 días si es necesario.
-    """
     print("🔍 Buscando la última fecha disponible de ERA5-Land...")
     c = cdsapi.Client()
     hoy = datetime.now(timezone.utc)
@@ -62,7 +56,6 @@ def obtener_ultimo_dia_disponible(max_dias=10):
                 },
                 archivo_prueba
             )
-            # Si se descargó, significa que esta fecha sí tiene datos
             os.remove(archivo_prueba)
             print(f"✅ Última fecha disponible confirmada: {fecha.strftime('%Y-%m-%d')}")
             return fecha
@@ -138,6 +131,12 @@ def procesar_y_cargar(archivo):
         nombre_tabla = "reanalysis_era5_land"
         df.to_sql(nombre_tabla, engine, if_exists="append", index=False)
         print(f"✅ Datos cargados en Supabase: {archivo} ({len(df)} filas)")
+
+        # Verificar última fecha cargada
+        with engine.connect() as conn:
+            result = conn.execute(f"SELECT MAX(fecha_actualizacion) FROM {nombre_tabla};")
+            print("Última actualización en Supabase:", result.fetchone()[0])
+
     except Exception as e:
         print(f"❌ Error procesando {archivo}: {e}")
 
