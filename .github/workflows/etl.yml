@@ -4,6 +4,7 @@ on:
   schedule:
     # Ejecutar cada día a las 02:00 hora El Salvador (08:00 UTC)
     - cron: '0 8 * * *'
+  workflow_dispatch:  # Permite ejecutar manualmente desde GitHub
 
 jobs:
   ejecutar-etl:
