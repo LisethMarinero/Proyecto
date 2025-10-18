@@ -6,6 +6,9 @@ import xarray as xr
 from sqlalchemy import create_engine
 from datetime import datetime, timedelta, timezone
 import pytz
+import gzip
+import shutil
+import zipfile
 
 # --- CONFIGURACIÓN ---
 os.environ["CDSAPI_URL"] = "https://cds.climate.copernicus.eu/api"
@@ -112,16 +115,30 @@ def procesar_y_cargar(archivo):
         print("⚠️ No hay archivo válido para procesar.")
         return
 
-    if os.path.getsize(archivo) < 1000:
-        print(f"⚠️ Archivo inválido o vacío: {archivo}")
+    # --- DESCOMPRIMIR SI ES NECESARIO ---
+    archivo_a_procesar = archivo
+    if archivo.endswith(".gz"):
+        archivo_a_procesar = archivo.replace(".gz", "")
+        with gzip.open(archivo, 'rb') as f_in:
+            with open(archivo_a_procesar, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        print(f"📦 Archivo descomprimido: {archivo_a_procesar}")
+    elif archivo.endswith(".zip"):
+        with zipfile.ZipFile(archivo, 'r') as zip_ref:
+            zip_ref.extractall(".")
+            archivo_a_procesar = zip_ref.namelist()[0]  # se toma el primer archivo dentro del zip
+        print(f"📦 Archivo descomprimido desde zip: {archivo_a_procesar}")
+
+    if os.path.getsize(archivo_a_procesar) < 1000:
+        print(f"⚠️ Archivo inválido o vacío: {archivo_a_procesar}")
         return
 
     try:
-        print(f"⚙️ Procesando {archivo}...")
-        ds = xr.open_dataset(archivo, engine="netcdf4", decode_cf=True)
+        print(f"⚙️ Procesando {archivo_a_procesar}...")
+        ds = xr.open_dataset(archivo_a_procesar, engine="netcdf4", decode_cf=True)
 
         if not ds.variables:
-            print(f"⚠️ Archivo sin variables: {archivo}")
+            print(f"⚠️ Archivo sin variables: {archivo_a_procesar}")
             return
 
         df = ds.to_dataframe().reset_index()
@@ -131,7 +148,7 @@ def procesar_y_cargar(archivo):
         engine = crear_engine()
         nombre_tabla = "reanalysis_era5_land"
         df.to_sql(nombre_tabla, engine, if_exists="append", index=False)
-        print(f"✅ Datos cargados en Supabase: {archivo} ({len(df)} filas)")
+        print(f"✅ Datos cargados en Supabase: {archivo_a_procesar} ({len(df)} filas)")
 
         # Verificar última fecha cargada
         with engine.connect() as conn:
@@ -139,8 +156,7 @@ def procesar_y_cargar(archivo):
             print("Última actualización en Supabase:", result.fetchone()[0])
 
     except Exception as e:
-        print(f"❌ Error procesando {archivo}: {e}")
-
+        print(f"❌ Error procesando {archivo_a_procesar}: {e}")
 # --- EJECUCIÓN PRINCIPAL ---
 if __name__ == "__main__":
     print("🚀 Iniciando ETL de la última actualización disponible ERA5-Land...")
