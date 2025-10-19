@@ -12,7 +12,7 @@ import zipfile
 
 # --- CONFIGURACIÓN ---
 os.environ["CDSAPI_URL"] = "https://cds.climate.copernicus.eu/api"
-os.environ["CDSAPI_KEY"] = "da593dcf-84ac-4790-a785-9aca76da8fee"  # 🔹 API key
+os.environ["CDSAPI_KEY"] = "da593dcf-84ac-4790-a785-9aca76da8fee"
 
 os.environ["DB_USER"] = "postgres.gkzvbidocktfkwhvngpg"
 os.environ["DB_PASSWORD"] = "Hipopotamo123456"
@@ -23,8 +23,15 @@ os.environ["DB_NAME"] = "postgres"
 # --- CREAR .cdsapirc ---
 cdsapi_path = os.path.expanduser("~/.cdsapirc")
 with open(cdsapi_path, "w") as f:
-    f.write(f"url: {os.environ['CDSAPI_URL']}\n")
-    f.write(f"key: {os.environ['CDSAPI_KEY']}\n")
+    f.write(f"url: {os.environ['CDSAPI_URL']}\nkey: {os.environ['CDSAPI_KEY']}\n")
+
+# --- LIMPIAR ARCHIVOS TEMPORALES .nc ---
+for f in os.listdir("."):
+    if f.endswith(".nc"):
+        try:
+            os.remove(f)
+        except:
+            pass
 
 # --- CONEXIÓN A SUPABASE ---
 def crear_engine():
@@ -39,7 +46,7 @@ def obtener_ultimo_dia_disponible(max_dias=10):
     print("🔍 Buscando la última fecha disponible de ERA5-Land...")
     c = cdsapi.Client()
     hoy = datetime.now(timezone.utc)
-    
+
     for i in range(1, max_dias + 1):
         fecha = hoy - timedelta(days=i)
         año, mes, dia = fecha.year, fecha.month, fecha.day
@@ -55,8 +62,7 @@ def obtener_ultimo_dia_disponible(max_dias=10):
                     'month': [f"{mes:02d}"],
                     'day': [f"{dia:02d}"],
                     'time': ['00:00'],
-                    'area': [14.0, -90.0, 13.5, -89.5],  # Recuadro centrado en El Salvador
-
+                    'area': [14.0, -90.0, 13.5, -89.5],
                 },
                 archivo_prueba
             )
@@ -64,8 +70,7 @@ def obtener_ultimo_dia_disponible(max_dias=10):
             print(f"✅ Última fecha disponible confirmada: {fecha.strftime('%Y-%m-%d')}")
             return fecha
         except Exception as e:
-            mensaje = str(e)
-            if "None of the data you have requested is available yet" in mensaje:
+            if "None of the data you have requested is available yet" in str(e):
                 print(f"⚠️ {fecha.strftime('%Y-%m-%d')} aún no disponible, probando anterior...")
             else:
                 print(f"⚠️ Error al probar {fecha.strftime('%Y-%m-%d')}: {e}")
@@ -73,17 +78,19 @@ def obtener_ultimo_dia_disponible(max_dias=10):
     print("❌ No se encontró una fecha disponible en los últimos 10 días.")
     return None
 
-# --- DESCARGAR DATOS DEL DÍA ---
-def descargar_datos(fecha):
+# --- DESCARGAR DATOS Y CONVERTIR A CSV ---
+def descargar_datos_csv(fecha):
     año, mes, dia = fecha.year, fecha.month, fecha.day
-    archivo = f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc"
+    archivo_nc = f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc"
+    archivo_csv = archivo_nc.replace(".nc", ".csv")
 
-    if os.path.exists(archivo):
-        print(f"ℹ️ Archivo ya existe: {archivo}, se omite descarga.")
-        return archivo
+    if os.path.exists(archivo_csv):
+        print(f"ℹ️ CSV ya existe: {archivo_csv}")
+        return archivo_csv
 
     print(f"🌍 Descargando datos ERA5-Land para {año}-{mes:02d}-{dia:02d}...")
     c = cdsapi.Client()
+
     try:
         c.retrieve(
             'reanalysis-era5-land',
@@ -101,31 +108,31 @@ def descargar_datos(fecha):
                 'time': ['00:00'],
                 'area': [14, -90, 13, -89],
             },
-            archivo
+            archivo_nc
         )
-        print(f"✅ Archivo descargado: {archivo}")
-        return archivo
-    except Exception as e:
-        print(f"⚠️ Error descargando {archivo}: {e}")
-        return None
+        print(f"✅ Archivo descargado: {archivo_nc}")
 
-# --- PROCESAR Y CARGAR A SUPABASE (y guardar CSV) ---
-def procesar_y_cargar(archivo):
-    if not archivo or not os.path.exists(archivo):
-        print("⚠️ No hay archivo válido para procesar.")
-        return
+        # Si viene comprimido (ZIP o GZ), descomprimirlo
+        if zipfile.is_zipfile(archivo_nc):
+            print("🗜️ Descomprimiendo archivo ZIP...")
+            with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
+                zip_ref.extractall(".")
+                contenido = zip_ref.namelist()[0]
+            os.remove(archivo_nc)
+            archivo_nc = contenido
 
-    # Convertir NetCDF a CSV
-    archivo_csv = archivo.replace(".nc", ".csv")
+        elif archivo_nc.endswith(".gz"):
+            print("🗜️ Descomprimiendo archivo GZ...")
+            archivo_descomprimido = archivo_nc.replace(".gz", "")
+            with gzip.open(archivo_nc, 'rb') as f_in:
+                with open(archivo_descomprimido, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            os.remove(archivo_nc)
+            archivo_nc = archivo_descomprimido
 
-    try:
-        print(f"⚙️ Procesando {archivo} y generando CSV...")
-        ds = xr.open_dataset(archivo, engine="netcdf4", decode_cf=True)
-
-        if not ds.variables:
-            print(f"⚠️ Archivo sin variables: {archivo}")
-            return
-
+        # Convertir NetCDF → CSV
+        print(f"⚙️ Convirtiendo {archivo_nc} a CSV...")
+        ds = xr.open_dataset(archivo_nc, engine="netcdf4")
         df = ds.to_dataframe().reset_index()
         df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
         df["fecha_actualizacion"] = datetime.now(pytz.UTC)
@@ -134,27 +141,45 @@ def procesar_y_cargar(archivo):
         df.to_csv(archivo_csv, index=False)
         print(f"✅ CSV generado: {archivo_csv}")
 
-        # Conexión a Supabase
+        # 🔒 Cerrar el dataset antes de eliminar el archivo
+        ds.close()
+
+        # 🧹 Eliminar el archivo .nc una vez cerrado
+        try:
+            os.remove(archivo_nc)
+            print(f"🧹 Archivo .nc eliminado.")
+        except PermissionError:
+            print(f"⚠️ No se pudo eliminar {archivo_nc}. Puede estar en uso.")
+
+        return archivo_csv
+
+    except Exception as e:
+        print(f"❌ Error durante descarga/conversión: {e}")
+        return None
+
+# --- CARGAR CSV A SUPABASE ---
+def cargar_a_supabase(archivo_csv):
+    if not archivo_csv or not os.path.exists(archivo_csv):
+        print("⚠️ No hay archivo CSV válido para cargar.")
+        return
+
+    try:
+        print(f"📤 Cargando datos desde {archivo_csv} a Supabase...")
+        df = pd.read_csv(archivo_csv)
         engine = crear_engine()
         nombre_tabla = "reanalysis_era5_land"
         df.to_sql(nombre_tabla, engine, if_exists="append", index=False)
-        print(f"✅ Datos cargados en Supabase ({len(df)} filas)")
-
-        # Verificar última fecha cargada
-        with engine.connect() as conn:
-            result = conn.execute(f"SELECT MAX(fecha_actualizacion) FROM {nombre_tabla};")
-            print("Última actualización en Supabase:", result.fetchone()[0])
-
+        print(f"✅ Datos cargados a Supabase ({len(df)} filas).")
     except Exception as e:
-        print(f"❌ Error procesando {archivo}: {e}")
+        print(f"❌ Error al cargar a Supabase: {e}")
 
-# --- EJECUCIÓN PRINCIPAL ---
+# --- MAIN ---
 if __name__ == "__main__":
-    print("🚀 Iniciando ETL de la última actualización disponible ERA5-Land...")
+    print("🚀 Iniciando ETL ERA5-Land (descarga directa a CSV)...")
     fecha_disponible = obtener_ultimo_dia_disponible()
     if fecha_disponible:
-        archivo = descargar_datos(fecha_disponible)
-        procesar_y_cargar(archivo)
+        archivo_csv = descargar_datos_csv(fecha_disponible)
+        cargar_a_supabase(archivo_csv)
     else:
-        print("⚠️ No se pudo determinar una fecha con datos disponibles.")
-    print("🎯 ETL completado con éxito.")
+        print("⚠️ No se encontró una fecha con datos disponibles.")
+    print("🎯 ETL finalizado correctamente.")
