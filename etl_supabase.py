@@ -123,9 +123,9 @@ def descargar_datos_csv(fecha):
             print("🗜️ Descomprimiendo archivo ZIP...")
             with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
                 zip_ref.extractall(".")
-                archivo_nc = zip_ref.namelist()[0]
-            os.remove(archivo_nc)
-            archivo_nc = contenido
+                archivo_nc = zip_ref.namelist()[0]  # archivo extraído
+            os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")  # elimina ZIP original
+
 
         elif archivo_nc.endswith(".gz"):
             print("🗜️ Descomprimiendo archivo GZ...")
