@@ -3,7 +3,7 @@ import os
 import cdsapi
 import pandas as pd
 import xarray as xr
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta, timezone
 import pytz
 import gzip
@@ -118,12 +118,12 @@ def descargar_datos_csv(fecha):
 
         print(f"✅ Archivo descargado: {archivo_nc}")
 
-        # Si viene comprimido (ZIP o GZ), descomprimirlo
+        # Descomprimir si es necesario
         if zipfile.is_zipfile(archivo_nc):
             print("🗜️ Descomprimiendo archivo ZIP...")
             with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
                 zip_ref.extractall(".")
-                contenido = zip_ref.namelist()[0]
+                archivo_nc = zip_ref.namelist()[0]
             os.remove(archivo_nc)
             archivo_nc = contenido
 
@@ -165,7 +165,7 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR CSV DIVIDIDO POR TABLAS ---
+# --- CARGAR CSV CON UPSERT ---
 def cargar_a_supabase(archivo_csv):
     if not archivo_csv or not os.path.exists(archivo_csv):
         print("⚠️ No hay archivo CSV válido para cargar.")
@@ -186,20 +186,32 @@ def cargar_a_supabase(archivo_csv):
         "windeh_9u766": ["valid_time", "u10", "v10", "latitude", "longitude"],
     }
 
-    for tabla, columnas in tablas.items():
-        columnas_validas = [col for col in columnas if col in df.columns]
-        if columnas_validas:
-            sub_df = df[columnas_validas].dropna(how="all")
-            if not sub_df.empty:
-                try:
-                    sub_df.to_sql(tabla, engine, if_exists="append", index=False)
-                    print(f"✅ {tabla}: {len(sub_df)} filas cargadas.")
-                except Exception as e:
-                    print(f"❌ Error cargando {tabla}: {e}")
+    with engine.begin() as conn:
+        for tabla, columnas in tablas.items():
+            columnas_validas = [col for col in columnas if col in df.columns]
+            if columnas_validas:
+                sub_df = df[columnas_validas].dropna(how="all")
+                if not sub_df.empty:
+                    # Crear tabla temporal
+                    sub_df.to_sql(f"{tabla}_temp", conn, if_exists="replace", index=False)
+                    cols_insert = ", ".join(columnas_validas)
+                    cols_update = ", ".join([f"{c} = EXCLUDED.{c}" for c in columnas_validas if c not in ["valid_time", "latitude", "longitude"]])
+                    upsert_sql = text(f"""
+                        INSERT INTO "{tabla}" ({cols_insert})
+                        SELECT {cols_insert} FROM "{tabla}_temp"
+                        ON CONFLICT (valid_time, latitude, longitude)
+                        DO UPDATE SET {cols_update};
+                        DROP TABLE "{tabla}_temp";
+                    """)
+                    try:
+                        conn.execute(upsert_sql)
+                        print(f"✅ {tabla}: {len(sub_df)} filas insertadas o actualizadas.")
+                    except Exception as e:
+                        print(f"❌ Error actualizando {tabla}: {e}")
+                else:
+                    print(f"⚠️ {tabla}: sin datos válidos para insertar.")
             else:
-                print(f"⚠️ {tabla}: sin datos válidos para insertar.")
-        else:
-            print(f"⚠️ {tabla}: columnas no encontradas en el dataset.")
+                print(f"⚠️ {tabla}: columnas no encontradas en el dataset.")
 
 # --- MAIN ---
 if __name__ == "__main__":
