@@ -119,14 +119,16 @@ def descargar_datos_csv(fecha):
 
         print(f"✅ Archivo descargado: {archivo_nc}")
 
-        # Descomprimir si es necesario
+        # Descomprimir ZIP
         if zipfile.is_zipfile(archivo_nc):
             print("🗜️ Descomprimiendo archivo ZIP...")
             with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
                 zip_ref.extractall(".")
-                archivo_nc = zip_ref.namelist()[0]
-            os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")
+                archivo_nc_extraido = zip_ref.namelist()[0]
+            os.remove(archivo_nc)
+            archivo_nc = archivo_nc_extraido
 
+        # Descomprimir GZ
         elif archivo_nc.endswith(".gz"):
             print("🗜️ Descomprimiendo archivo GZ...")
             archivo_descomprimido = archivo_nc.replace(".gz", "")
@@ -156,21 +158,22 @@ def descargar_datos_csv(fecha):
         os.remove(archivo_nc)
         print(f"✅ CSV generado: {archivo_csv}")
 
-        # 🔒 Cerrar el dataset antes de eliminar el archivo
+        # Cerrar NetCDF y eliminar archivo
         ds.close()
 
         # 🧹 Eliminar el archivo .nc una vez cerrado
         try:
             os.remove(archivo_nc)
-            print(f"🧹 Archivo .nc eliminado.")
-        except PermissionError:
-            print(f"⚠️ No se pudo eliminar {archivo_nc}. Puede estar en uso.")
+            print(f"🧹 Archivo .nc eliminado correctamente: {archivo_nc}")
+        except FileNotFoundError:
+            print(f"⚠️ Archivo .nc ya fue eliminado: {archivo_nc}")
 
         return archivo_csv
 
     except Exception as e:
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
+
 
 # --- CARGAR CSV CON UPSERT ---
 def cargar_a_supabase(archivo_csv):
