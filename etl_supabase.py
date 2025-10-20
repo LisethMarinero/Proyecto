@@ -84,9 +84,10 @@ def descargar_datos_csv(fecha):
     archivo_nc = f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc"
     archivo_csv = archivo_nc.replace(".nc", ".csv")
 
+    # Forzar regeneración del CSV si existe
     if os.path.exists(archivo_csv):
-        print(f"ℹ️ CSV ya existe: {archivo_csv}")
-        return archivo_csv
+        print(f"ℹ️ CSV existe, se volverá a generar: {archivo_csv}")
+        os.remove(archivo_csv)
 
     print(f"🌍 Descargando datos ERA5-Land para {año}-{mes:02d}-{dia:02d}...")
     c = cdsapi.Client()
@@ -123,9 +124,8 @@ def descargar_datos_csv(fecha):
             print("🗜️ Descomprimiendo archivo ZIP...")
             with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
                 zip_ref.extractall(".")
-                archivo_nc = zip_ref.namelist()[0]  # archivo extraído
-            os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")  # elimina ZIP original
-
+                archivo_nc = zip_ref.namelist()[0]
+            os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")
 
         elif archivo_nc.endswith(".gz"):
             print("🗜️ Descomprimiendo archivo GZ...")
@@ -141,6 +141,13 @@ def descargar_datos_csv(fecha):
         ds = xr.open_dataset(archivo_nc, engine="netcdf4")
         df = ds.to_dataframe().reset_index()
         df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
+
+        # Mapear nombres de columnas para tablas secundarias
+        df.rename(columns={
+            "skin_temperature": "skt",
+            "snow_cover": "nieve",
+        }, inplace=True)
+
         df["fecha_actualizacion"] = datetime.now(pytz.UTC)
 
         # Guardar CSV
@@ -179,7 +186,7 @@ def cargar_a_supabase(archivo_csv):
         "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
         "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
         "skin-temperaturehke46ner": ["valid_time", "skt", "latitude", "longitude"],
-        "snowhy9lgjol": ["valid_time", "snowc", "latitude", "longitude"],
+        "snowhy9lgjol": ["valid_time", "nieve", "latitude", "longitude"],
         "soil-waterlxqhzxz9": ["valid_time", "swvl1", "swvl2", "swvl3", "swvl4", "latitude", "longitude"],
         "temperatureedviyn5g": ["valid_time", "d2m", "t2m", "latitude", "longitude"],
         "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
