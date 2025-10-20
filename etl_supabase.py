@@ -25,7 +25,7 @@ cdsapi_path = os.path.expanduser("~/.cdsapirc")
 with open(cdsapi_path, "w") as f:
     f.write(f"url: {os.environ['CDSAPI_URL']}\nkey: {os.environ['CDSAPI_KEY']}\n")
 
-# --- LIMPIAR ARCHIVOS TEMPORALES .nc ---
+# --- LIMPIAR ARCHIVOS TEMPORALES ---
 for f in os.listdir("."):
     if f.endswith(".nc"):
         try:
@@ -97,10 +97,15 @@ def descargar_datos_csv(fecha):
             {
                 'format': 'netcdf',
                 'variable': [
-                    "2m_temperature",
-                    "2m_dewpoint_temperature",
-                    "surface_pressure",
-                    "total_precipitation"
+                    "2m_temperature", "2m_dewpoint_temperature",
+                    "surface_pressure", "total_precipitation",
+                    "surface_solar_radiation_downwards", "surface_thermal_radiation_downwards",
+                    "skin_temperature", "snow_cover",
+                    "volumetric_soil_water_layer_1", "volumetric_soil_water_layer_2",
+                    "volumetric_soil_water_layer_3", "volumetric_soil_water_layer_4",
+                    "soil_temperature_level_1", "soil_temperature_level_2",
+                    "soil_temperature_level_3", "soil_temperature_level_4",
+                    "10m_u_component_of_wind", "10m_v_component_of_wind"
                 ],
                 'year': [str(año)],
                 'month': [f"{mes:02d}"],
@@ -110,6 +115,7 @@ def descargar_datos_csv(fecha):
             },
             archivo_nc
         )
+
         print(f"✅ Archivo descargado: {archivo_nc}")
 
         # Si viene comprimido (ZIP o GZ), descomprimirlo
@@ -139,6 +145,7 @@ def descargar_datos_csv(fecha):
 
         # Guardar CSV
         df.to_csv(archivo_csv, index=False)
+        ds.close()
         os.remove(archivo_nc)
         print(f"✅ CSV generado: {archivo_csv}")
 
@@ -158,25 +165,45 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR CSV A SUPABASE ---
+# --- CARGAR CSV DIVIDIDO POR TABLAS ---
 def cargar_a_supabase(archivo_csv):
     if not archivo_csv or not os.path.exists(archivo_csv):
         print("⚠️ No hay archivo CSV válido para cargar.")
         return
 
-    try:
-        print(f"📤 Cargando datos desde {archivo_csv} a Supabase...")
-        df = pd.read_csv(archivo_csv)
-        engine = crear_engine()
-        nombre_tabla = "reanalysis_era5_land"
-        df.to_sql(nombre_tabla, engine, if_exists="append", index=False)
-        print(f"✅ Datos cargados a Supabase ({len(df)} filas).")
-    except Exception as e:
-        print(f"❌ Error al cargar a Supabase: {e}")
+    print(f"📤 Cargando datos desde {archivo_csv} a las tablas correspondientes...")
+    df = pd.read_csv(archivo_csv)
+    engine = crear_engine()
+
+    tablas = {
+        "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
+        "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
+        "skin-temperaturehke46ner": ["valid_time", "skt", "latitude", "longitude"],
+        "snowhy9lgjol": ["valid_time", "snowc", "latitude", "longitude"],
+        "soil-waterlxqhzxz9": ["valid_time", "swvl1", "swvl2", "swvl3", "swvl4", "latitude", "longitude"],
+        "temperatureedviyn5g": ["valid_time", "d2m", "t2m", "latitude", "longitude"],
+        "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
+        "windeh_9u766": ["valid_time", "u10", "v10", "latitude", "longitude"],
+    }
+
+    for tabla, columnas in tablas.items():
+        columnas_validas = [col for col in columnas if col in df.columns]
+        if columnas_validas:
+            sub_df = df[columnas_validas].dropna(how="all")
+            if not sub_df.empty:
+                try:
+                    sub_df.to_sql(tabla, engine, if_exists="append", index=False)
+                    print(f"✅ {tabla}: {len(sub_df)} filas cargadas.")
+                except Exception as e:
+                    print(f"❌ Error cargando {tabla}: {e}")
+            else:
+                print(f"⚠️ {tabla}: sin datos válidos para insertar.")
+        else:
+            print(f"⚠️ {tabla}: columnas no encontradas en el dataset.")
 
 # --- MAIN ---
 if __name__ == "__main__":
-    print("🚀 Iniciando ETL ERA5-Land (descarga directa a CSV)...")
+    print("🚀 Iniciando ETL ERA5-Land (descarga y carga en tablas)...")
     fecha_disponible = obtener_ultimo_dia_disponible()
     if fecha_disponible:
         archivo_csv = descargar_datos_csv(fecha_disponible)
