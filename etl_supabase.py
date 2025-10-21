@@ -10,14 +10,13 @@ import gzip
 import shutil
 import zipfile
 
-# --- CONFIGURACIÓN ERA5-LAND ---
+# --- CONFIGURACIÓN ---
 os.environ["CDSAPI_URL"] = "https://cds.climate.copernicus.eu/api"
 os.environ["CDSAPI_KEY"] = "da593dcf-84ac-4790-a785-9aca76da8fee"
 
-# --- CONFIGURACIÓN SUPABASE ---
-os.environ["DB_USER"] = "TU_USUARIO"
-os.environ["DB_PASSWORD"] = "TU_CONTRASEÑA"
-os.environ["DB_HOST"] = "TU_HOST"
+os.environ["DB_USER"] = "postgres.gkzvbidocktfkwhvngpg"
+os.environ["DB_PASSWORD"] = "Hipopotamo123456"
+os.environ["DB_HOST"] = "aws-1-us-east-2.pooler.supabase.com"
 os.environ["DB_PORT"] = "6543"
 os.environ["DB_NAME"] = "postgres"
 
@@ -42,7 +41,7 @@ def crear_engine():
     )
     return create_engine(conexion, connect_args={'sslmode': 'require'})
 
-# --- OBTENER ÚLTIMO DÍA DISPONIBLE ---
+# --- DETERMINAR ÚLTIMO DÍA DISPONIBLE ---
 def obtener_ultimo_dia_disponible(max_dias=10):
     print("🔍 Buscando la última fecha disponible de ERA5-Land...")
     c = cdsapi.Client()
@@ -93,78 +92,94 @@ def descargar_datos_csv(fecha):
     print(f"🌍 Descargando datos ERA5-Land para {año}-{mes:02d}-{dia:02d}...")
     c = cdsapi.Client()
 
-    c.retrieve(
-        'reanalysis-era5-land',
-        {
-            'format': 'netcdf',
-            'variable': [
-                "2m_temperature", "2m_dewpoint_temperature",
-                "surface_pressure", "total_precipitation",
-                "surface_solar_radiation_downwards", "surface_thermal_radiation_downwards",
-                "skin_temperature", "snow_cover",
-                "volumetric_soil_water_layer_1", "volumetric_soil_water_layer_2",
-                "volumetric_soil_water_layer_3", "volumetric_soil_water_layer_4",
-                "soil_temperature_level_1", "soil_temperature_level_2",
-                "soil_temperature_level_3", "soil_temperature_level_4",
-                "10m_u_component_of_wind", "10m_v_component_of_wind"
-            ],
-            'year': [str(año)],
-            'month': [f"{mes:02d}"],
-            'day': [f"{dia:02d}"],
-            'time': ['00:00'],
-            'area': [14, -90, 13, -89],
-        },
-        archivo_nc
-    )
-    print(f"✅ Archivo descargado: {archivo_nc}")
+    try:
+        c.retrieve(
+            'reanalysis-era5-land',
+            {
+                'format': 'netcdf',
+                'variable': [
+                    "2m_temperature", "2m_dewpoint_temperature",
+                    "surface_pressure", "total_precipitation",
+                    "surface_solar_radiation_downwards", "surface_thermal_radiation_downwards",
+                    "skin_temperature", "snow_cover",
+                    "volumetric_soil_water_layer_1", "volumetric_soil_water_layer_2",
+                    "volumetric_soil_water_layer_3", "volumetric_soil_water_layer_4",
+                    "soil_temperature_level_1", "soil_temperature_level_2",
+                    "soil_temperature_level_3", "soil_temperature_level_4",
+                    "10m_u_component_of_wind", "10m_v_component_of_wind"
+                ],
+                'year': [str(año)],
+                'month': [f"{mes:02d}"],
+                'day': [f"{dia:02d}"],
+                'time': ['00:00'],
+                'area': [14, -90, 13, -89],
+            },
+            archivo_nc
+        )
 
-    # Descomprimir ZIP o GZ si aplica
-    if zipfile.is_zipfile(archivo_nc):
-        print("🗜️ Descomprimiendo archivo ZIP...")
-        with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
-            zip_ref.extractall(".")
-            archivo_nc = zip_ref.namelist()[0]
+        print(f"✅ Archivo descargado: {archivo_nc}")
+
+        # Descomprimir si es necesario
+        if zipfile.is_zipfile(archivo_nc):
+            print("🗜️ Descomprimiendo archivo ZIP...")
+            with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
+                zip_ref.extractall(".")
+                archivo_nc = zip_ref.namelist()[0]
+            os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")
+
+        elif archivo_nc.endswith(".gz"):
+            print("🗜️ Descomprimiendo archivo GZ...")
+            archivo_descomprimido = archivo_nc.replace(".gz", "")
+            with gzip.open(archivo_nc, 'rb') as f_in:
+                with open(archivo_descomprimido, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            os.remove(archivo_nc)
+            archivo_nc = archivo_descomprimido
+
+        # Convertir NetCDF → CSV
+        print(f"⚙️ Convirtiendo {archivo_nc} a CSV...")
+        ds = xr.open_dataset(archivo_nc, engine="netcdf4")
+        df = ds.to_dataframe().reset_index()
+        df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
+
+        # Mapear nombres de columnas para tablas secundarias
+        df.rename(columns={
+            "skin_temperature": "skt",
+            "snow_cover": "nieve",
+        }, inplace=True)
+
+        df["fecha_actualizacion"] = datetime.now(pytz.UTC)
+
+        # Guardar CSV
+        df.to_csv(archivo_csv, index=False)
+        ds.close()
         os.remove(archivo_nc)
+        print(f"✅ CSV generado: {archivo_csv}")
 
-    elif archivo_nc.endswith(".gz"):
-        archivo_descomprimido = archivo_nc.replace(".gz", "")
-        with gzip.open(archivo_nc, 'rb') as f_in, open(archivo_descomprimido, 'wb') as f_out:
-            shutil.copyfileobj(f_in, f_out)
-        os.remove(archivo_nc)
-        archivo_nc = archivo_descomprimido
+        # 🔒 Cerrar el dataset antes de eliminar el archivo
+        ds.close()
 
-    print(f"⚙️ Convirtiendo {archivo_nc} a CSV...")
-    ds = xr.open_dataset(archivo_nc, engine="netcdf4")
-    df = ds.to_dataframe().reset_index()
-    df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
+        # 🧹 Eliminar el archivo .nc una vez cerrado
+        try:
+            os.remove(archivo_nc)
+            print(f"🧹 Archivo .nc eliminado.")
+        except PermissionError:
+            print(f"⚠️ No se pudo eliminar {archivo_nc}. Puede estar en uso.")
 
-    df.rename(columns={"skin_temperature": "skt", "snow_cover": "nieve"}, inplace=True)
-    df["fecha_actualizacion"] = datetime.now(pytz.UTC)
+        return archivo_csv
 
-    df.to_csv(archivo_csv, index=False)
-    ds.close()
-    os.remove(archivo_nc)
-    print(f"✅ CSV generado: {archivo_csv}")
+    except Exception as e:
+        print(f"❌ Error durante descarga/conversión: {e}")
+        return None
 
-    return archivo_csv
-
-# --- CARGAR CSV CON UPSERT SOLO PARA EL DÍA DESCARGADO ---
-def cargar_a_supabase(archivo_csv, fecha_disponible):
+# --- CARGAR CSV CON UPSERT ---
+def cargar_a_supabase(archivo_csv):
     if not archivo_csv or not os.path.exists(archivo_csv):
         print("⚠️ No hay archivo CSV válido para cargar.")
         return
 
     print(f"📤 Cargando datos desde {archivo_csv} a las tablas correspondientes...")
     df = pd.read_csv(archivo_csv)
-    df['valid_time'] = pd.to_datetime(df['valid_time'])
-
-    # Filtrar solo los datos del día descargado
-    df = df[df['valid_time'].dt.date == fecha_disponible.date()]
-
-    if df.empty:
-        print("⚠️ No hay datos para el día descargado. Nada que cargar.")
-        return
-
     engine = crear_engine()
 
     tablas = {
@@ -204,13 +219,15 @@ def cargar_a_supabase(archivo_csv, fecha_disponible):
                             DO NOTHING;
                             DROP TABLE "{tabla}_temp";
                         """)
-                    conn.execute(upsert_sql)
-                    print(f"✅ {tabla}: {len(sub_df)} filas insertadas o actualizadas.")
+                    try:
+                        conn.execute(upsert_sql)
+                        print(f"✅ {tabla}: {len(sub_df)} filas insertadas o actualizadas.")
+                    except Exception as e:
+                        print(f"❌ Error actualizando {tabla}: {e}")
             else:
                 print(f"⚠️ {tabla}: sin datos válidos para insertar.")
         else:
             print(f"⚠️ {tabla}: columnas no encontradas en el dataset.")
-
 
 # --- MAIN ---
 if __name__ == "__main__":
@@ -218,7 +235,7 @@ if __name__ == "__main__":
     fecha_disponible = obtener_ultimo_dia_disponible()
     if fecha_disponible:
         archivo_csv = descargar_datos_csv(fecha_disponible)
-        cargar_a_supabase(archivo_csv, fecha_disponible)  # ✅ CORRECTO
+        cargar_a_supabase(archivo_csv)
     else:
         print("⚠️ No se encontró una fecha con datos disponibles.")
     print("🎯 ETL finalizado correctamente.")
