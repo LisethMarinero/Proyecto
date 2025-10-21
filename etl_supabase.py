@@ -176,13 +176,22 @@ def descargar_datos_csv(fecha):
 
 
 # --- CARGAR CSV CON UPSERT ---
-def cargar_a_supabase(archivo_csv):
+def cargar_a_supabase(archivo_csv, fecha_disponible):
     if not archivo_csv or not os.path.exists(archivo_csv):
         print("⚠️ No hay archivo CSV válido para cargar.")
         return
 
     print(f"📤 Cargando datos desde {archivo_csv} a las tablas correspondientes...")
     df = pd.read_csv(archivo_csv)
+    df['valid_time'] = pd.to_datetime(df['valid_time'])
+
+    # Filtrar solo el día descargado
+    df = df[df['valid_time'].dt.date == fecha_disponible.date()]
+
+    if df.empty:
+        print("⚠️ No hay datos para el día descargado. Nada que cargar.")
+        return
+
     engine = crear_engine()
 
     tablas = {
@@ -231,6 +240,7 @@ def cargar_a_supabase(archivo_csv):
                 print(f"⚠️ {tabla}: sin datos válidos para insertar.")
         else:
             print(f"⚠️ {tabla}: columnas no encontradas en el dataset.")
+
 
 # --- MAIN ---
 if __name__ == "__main__":
