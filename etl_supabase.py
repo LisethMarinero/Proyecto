@@ -12,7 +12,7 @@ import zipfile
 
 # --- CONFIGURACIÓN ERA5-LAND ---
 os.environ["CDSAPI_URL"] = "https://cds.climate.copernicus.eu/api"
-os.environ["CDSAPI_KEY"] = "TU_CDSAPI_KEY"
+os.environ["CDSAPI_KEY"] = "da593dcf-84ac-4790-a785-9aca76da8fee"
 
 # --- CONFIGURACIÓN SUPABASE ---
 os.environ["DB_USER"] = "TU_USUARIO"
