@@ -25,7 +25,7 @@ cdsapi_path = os.path.expanduser("~/.cdsapirc")
 with open(cdsapi_path, "w") as f:
     f.write(f"url: {os.environ['CDSAPI_URL']}\nkey: {os.environ['CDSAPI_KEY']}\n")
 
-# --- LIMPIAR ARCHIVOS TEMPORALES ---
+# --- LIMPIAR ARCHIVOS TEMPORALES .nc ---
 for f in os.listdir("."):
     if f.endswith(".nc"):
         try:
@@ -86,8 +86,8 @@ def descargar_datos_csv(fecha):
 
     # Forzar regeneración del CSV si existe
     if os.path.exists(archivo_csv):
-        print(f"ℹ️ CSV existe, se volverá a generar: {archivo_csv}")
-        os.remove(archivo_csv)
+        print(f"ℹ️ CSV ya existe: {archivo_csv}")
+        return archivo_csv
 
     print(f"🌍 Descargando datos ERA5-Land para {año}-{mes:02d}-{dia:02d}...")
     c = cdsapi.Client()
@@ -119,13 +119,13 @@ def descargar_datos_csv(fecha):
 
         print(f"✅ Archivo descargado: {archivo_nc}")
 
-        # Descomprimir si es necesario
+        # Descomprimir ZIP o GZ si es necesario
         if zipfile.is_zipfile(archivo_nc):
             print("🗜️ Descomprimiendo archivo ZIP...")
             with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
                 zip_ref.extractall(".")
                 archivo_nc = zip_ref.namelist()[0]
-            os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")
+            os.remove(archivo_nc)
 
         elif archivo_nc.endswith(".gz"):
             print("🗜️ Descomprimiendo archivo GZ...")
@@ -172,7 +172,7 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR CSV CON UPSERT ---
+# --- CARGAR CSV A SUPABASE CON UPSERT ---
 def cargar_a_supabase(archivo_csv):
     if not archivo_csv or not os.path.exists(archivo_csv):
         print("⚠️ No hay archivo CSV válido para cargar.")
@@ -180,17 +180,20 @@ def cargar_a_supabase(archivo_csv):
 
     print(f"📤 Cargando datos desde {archivo_csv} a las tablas correspondientes...")
     df = pd.read_csv(archivo_csv)
+    df['valid_time'] = pd.to_datetime(df['valid_time'])
     engine = crear_engine()
 
     tablas = {
-        "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
-        "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
-        "skin-temperaturehke46ner": ["valid_time", "skt", "latitude", "longitude"],
-        "snowhy9lgjol": ["valid_time", "nieve", "latitude", "longitude"],
-        "soil-waterlxqhzxz9": ["valid_time", "swvl1", "swvl2", "swvl3", "swvl4", "latitude", "longitude"],
-        "temperatureedviyn5g": ["valid_time", "d2m", "t2m", "latitude", "longitude"],
-        "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
-        "windeh_9u766": ["valid_time", "u10", "v10", "latitude", "longitude"],
+        "pressure_precipitation": ["valid_time", "surface_pressure", "total_precipitation", "latitude", "longitude"],
+        "radiation_heat": ["valid_time", "surface_solar_radiation_downwards", "surface_thermal_radiation_downwards", "latitude", "longitude"],
+        "skin_temperature": ["valid_time", "skin_temperature", "latitude", "longitude"],
+        "snow": ["valid_time", "snow_cover", "latitude", "longitude"],
+        "soil_water": ["valid_time", "volumetric_soil_water_layer_1", "volumetric_soil_water_layer_2",
+                       "volumetric_soil_water_layer_3", "volumetric_soil_water_layer_4", "latitude", "longitude"],
+        "temperature": ["valid_time", "2m_temperature", "2m_dewpoint_temperature", "latitude", "longitude"],
+        "soil_temperature": ["valid_time", "soil_temperature_level_1", "soil_temperature_level_2",
+                             "soil_temperature_level_3", "soil_temperature_level_4", "latitude", "longitude"],
+        "wind": ["valid_time", "10m_u_component_of_wind", "10m_v_component_of_wind", "latitude", "longitude"],
     }
 
     for tabla, columnas in tablas.items():
@@ -219,15 +222,10 @@ def cargar_a_supabase(archivo_csv):
                             DO NOTHING;
                             DROP TABLE "{tabla}_temp";
                         """)
-                    try:
-                        conn.execute(upsert_sql)
-                        print(f"✅ {tabla}: {len(sub_df)} filas insertadas o actualizadas.")
-                    except Exception as e:
-                        print(f"❌ Error actualizando {tabla}: {e}")
-            else:
-                print(f"⚠️ {tabla}: sin datos válidos para insertar.")
+                    conn.execute(upsert_sql)
+                    print(f"✅ {tabla}: {len(sub_df)} filas insertadas o actualizadas.")
         else:
-            print(f"⚠️ {tabla}: columnas no encontradas en el dataset.")
+            print(f"⚠️ {tabla}: columnas no encontradas en el CSV.")
 
 # --- MAIN ---
 if __name__ == "__main__":
