@@ -79,8 +79,7 @@ def crear_tablas_si_no_existen(engine):
                 tp FLOAT,
                 ssrd FLOAT,
                 strd FLOAT,
-                fecha_actualizacion TIMESTAMP,
-                UNIQUE(valid_time, latitude, longitude)
+                fecha_actualizacion TIMESTAMP
             );
             """)
             conn.execute(sql)
@@ -189,7 +188,7 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR CSV CON UPSERT ---
+# --- CARGAR CSV (sin eliminar duplicados) ---
 def cargar_a_supabase(archivo_csv):
     if not archivo_csv or not os.path.exists(archivo_csv):
         print("⚠️ No hay CSV válido para cargar.")
@@ -222,25 +221,13 @@ def cargar_a_supabase(archivo_csv):
         with engine.begin() as conn:
             sub_df.to_sql(f"{tabla}_temp", conn, if_exists="replace", index=False)
             cols_insert = ", ".join(cols_validas)
-            cols_update = ", ".join([f"{c} = EXCLUDED.{c}" for c in cols_validas if c not in ["valid_time","latitude","longitude"]])
-            if cols_update:
-                upsert_sql = text(f"""
-                    INSERT INTO "{tabla}" ({cols_insert})
-                    SELECT {cols_insert} FROM "{tabla}_temp"
-                    ON CONFLICT (valid_time, latitude, longitude)
-                    DO UPDATE SET {cols_update};
-                    DROP TABLE "{tabla}_temp";
-                """)
-            else:
-                upsert_sql = text(f"""
-                    INSERT INTO "{tabla}" ({cols_insert})
-                    SELECT {cols_insert} FROM "{tabla}_temp"
-                    ON CONFLICT (valid_time, latitude, longitude)
-                    DO NOTHING;
-                    DROP TABLE "{tabla}_temp";
-                """)
-            conn.execute(upsert_sql)
-            print(f"✅ {tabla}: {len(sub_df)} filas insertadas o actualizadas.")
+            insert_sql = text(f"""
+                INSERT INTO "{tabla}" ({cols_insert})
+                SELECT {cols_insert} FROM "{tabla}_temp";
+                DROP TABLE "{tabla}_temp";
+            """)
+            conn.execute(insert_sql)
+            print(f"✅ {tabla}: {len(sub_df)} filas insertadas (sin eliminar duplicados).")
 
 # --- MAIN ---
 if __name__ == "__main__":
