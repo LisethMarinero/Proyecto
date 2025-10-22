@@ -1,4 +1,4 @@
-# etl_supabase_v3.py
+# etl_supabase_v4.py
 import os
 import cdsapi
 import pandas as pd
@@ -6,8 +6,6 @@ import xarray as xr
 from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta, timezone
 import pytz
-import gzip
-import shutil
 import zipfile
 
 # --- CONFIGURACIÓN ---
@@ -20,14 +18,13 @@ os.environ["DB_HOST"] = "aws-1-us-east-2.pooler.supabase.com"
 os.environ["DB_PORT"] = "6543"
 os.environ["DB_NAME"] = "postgres"
 
-# --- CREAR .cdsapirc ---
 cdsapi_path = os.path.expanduser("~/.cdsapirc")
 with open(cdsapi_path, "w") as f:
     f.write(f"url: {os.environ['CDSAPI_URL']}\nkey: {os.environ['CDSAPI_KEY']}\n")
 
 # --- LIMPIAR ARCHIVOS TEMPORALES ---
 for f in os.listdir("."):
-    if f.endswith(".nc") or f.endswith(".csv"):
+    if f.endswith((".nc", ".csv", ".zip")):
         try:
             os.remove(f)
         except:
@@ -72,7 +69,6 @@ def crear_tablas(engine):
         """
         conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
 
-        # Tablas específicas
         tablas = [
             "pressure-precipitationw8_rcxxb",
             "radiation-heatcpg03hs6",
@@ -109,14 +105,13 @@ def obtener_ultimo_dia_disponible(max_dias=10):
                 },
                 archivo_prueba
             )
+            if os.path.getsize(archivo_prueba) < 1024:
+                raise ValueError("Archivo NC muy pequeño, posiblemente no válido")
             os.remove(archivo_prueba)
             print(f"✅ Última fecha disponible: {fecha.strftime('%Y-%m-%d')}")
             return fecha
         except Exception as e:
-            if "None of the data you have requested is available yet" in str(e):
-                print(f"⚠️ {fecha.strftime('%Y-%m-%d')} aún no disponible, probando anterior...")
-            else:
-                print(f"⚠️ Error al probar {fecha.strftime('%Y-%m-%d')}: {e}")
+            print(f"⚠️ {fecha.strftime('%Y-%m-%d')} no disponible: {e}")
     print("❌ No se encontró una fecha disponible en los últimos 10 días.")
     return None
 
@@ -156,30 +151,38 @@ def descargar_datos_csv(fecha):
             },
             archivo_nc
         )
+        if os.path.getsize(archivo_nc) < 1024:
+            raise ValueError("Archivo NC muy pequeño o incorrecto")
         print(f"✅ Archivo descargado: {archivo_nc}")
 
-        # Convertir NetCDF → CSV
+        # Intentar abrir NetCDF
+        try:
+            ds = xr.open_dataset(archivo_nc, engine="netcdf4")
+        except Exception as e:
+            print(f"❌ Archivo NetCDF corrupto o inválido: {e}")
+            return None
+
         print(f"⚙️ Convirtiendo {archivo_nc} a CSV...")
-        ds = xr.open_dataset(archivo_nc, engine="netcdf4")
         df = ds.to_dataframe().reset_index()
         df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
-        df.rename(columns={"skin_temperature": "skt", "snow_cover": "nieve",
-                           "2m_temperature": "t2m", "2m_dewpoint_temperature": "d2m",
-                           "surface_pressure": "sp",
-                           "total_precipitation": "tp",
-                           "surface_solar_radiation_downwards": "ssrd",
-                           "surface_thermal_radiation_downwards": "strd",
-                           "volumetric_soil_water_layer_1": "swvl1",
-                           "volumetric_soil_water_layer_2": "swvl2",
-                           "volumetric_soil_water_layer_3": "swvl3",
-                           "volumetric_soil_water_layer_4": "swvl4",
-                           "soil_temperature_level_1": "stl1",
-                           "soil_temperature_level_2": "stl2",
-                           "soil_temperature_level_3": "stl3",
-                           "soil_temperature_level_4": "stl4",
-                           "10m_u_component_of_wind": "u10",
-                           "10m_v_component_of_wind": "v10"
-                          }, inplace=True)
+        df.rename(columns={
+            "skin_temperature": "skt", "snow_cover": "nieve",
+            "2m_temperature": "t2m", "2m_dewpoint_temperature": "d2m",
+            "surface_pressure": "sp",
+            "total_precipitation": "tp",
+            "surface_solar_radiation_downwards": "ssrd",
+            "surface_thermal_radiation_downwards": "strd",
+            "volumetric_soil_water_layer_1": "swvl1",
+            "volumetric_soil_water_layer_2": "swvl2",
+            "volumetric_soil_water_layer_3": "swvl3",
+            "volumetric_soil_water_layer_4": "swvl4",
+            "soil_temperature_level_1": "stl1",
+            "soil_temperature_level_2": "stl2",
+            "soil_temperature_level_3": "stl3",
+            "soil_temperature_level_4": "stl4",
+            "10m_u_component_of_wind": "u10",
+            "10m_v_component_of_wind": "v10"
+        }, inplace=True)
         df["fecha_actualizacion"] = datetime.now(pytz.UTC)
         df.to_csv(archivo_csv, index=False)
         ds.close()
@@ -197,7 +200,6 @@ def cargar_tabla_general(engine, archivo_csv):
         'swvl1','swvl2','swvl3','swvl4','u10','v10','skt','nieve','sp','tp','ssrd','strd','fecha_actualizacion'
     ]
     df = pd.read_csv(archivo_csv)
-    # Convertir a tipos correctos
     for col in columnas:
         if col in ['valid_time','fecha_actualizacion']:
             df[col] = pd.to_datetime(df[col], errors='coerce')
