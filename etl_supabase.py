@@ -271,7 +271,7 @@ def distribuir_datos(engine):
         "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
         "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
         "skin-temperaturehke46ner": ["valid_time", "skt", "latitude", "longitude"],
-        "snowhy9lgjol": ["valid_time", "nieve", "latitude", "longitude"],
+        "snowhy9lgjol": ["valid_time", "snowc", "latitude", "longitude"],
         "soil-waterlxqhzxz9": ["valid_time", "swvl1", "swvl2", "swvl3", "swvl4", "latitude", "longitude"],
         "temperatureedviyn5g": ["valid_time", "d2m", "t2m", "latitude", "longitude"],
         "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
