@@ -1,10 +1,9 @@
-# etl_supabase_completo_actualizado.py
+# etl_supabase_completo_v2.py
 import os
 import cdsapi
 import pandas as pd
 import xarray as xr
 from sqlalchemy import create_engine, text
-from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime, timedelta, timezone
 import pytz
 import gzip
@@ -218,21 +217,43 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR A TABLA GENERAL CON ACTUALIZACIÓN ---
+# --- CARGAR A TABLA GENERAL CON ON CONFLICT ---
 def cargar_tabla_general(engine, archivo_csv):
     df = pd.read_csv(archivo_csv)
     df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'])
-
     with engine.begin() as conn:
-        tabla = "reanalysis_era5_land"
-        registros = df.to_dict(orient="records")
-        stmt = insert(text(tabla)).values(registros)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['valid_time', 'latitude', 'longitude'],
-            set_={c: stmt.excluded[c] for c in df.columns if c not in ['valid_time','latitude','longitude','id']}
-        )
-        conn.execute(stmt)
-    print(f"✅ Datos guardados/actualizados en tabla general {tabla} ({len(df)} filas).")
+        # Cargar datos en tabla temporal
+        df.to_sql('reanalysis_era5_land_temp', conn, if_exists='replace', index=False)
+
+        # Insertar en tabla general evitando duplicados
+        conn.execute(text("""
+            INSERT INTO reanalysis_era5_land AS target
+            SELECT * FROM reanalysis_era5_land_temp
+            ON CONFLICT (valid_time, latitude, longitude)
+            DO UPDATE SET
+                t2m = EXCLUDED.t2m,
+                d2m = EXCLUDED.d2m,
+                stl1 = EXCLUDED.stl1,
+                stl2 = EXCLUDED.stl2,
+                stl3 = EXCLUDED.stl3,
+                stl4 = EXCLUDED.stl4,
+                swvl1 = EXCLUDED.swvl1,
+                swvl2 = EXCLUDED.swvl2,
+                swvl3 = EXCLUDED.swvl3,
+                swvl4 = EXCLUDED.swvl4,
+                u10 = EXCLUDED.u10,
+                v10 = EXCLUDED.v10,
+                skt = EXCLUDED.skt,
+                nieve = EXCLUDED.nieve,
+                sp = EXCLUDED.sp,
+                tp = EXCLUDED.tp,
+                ssrd = EXCLUDED.ssrd,
+                strd = EXCLUDED.strd,
+                fecha_actualizacion = EXCLUDED.fecha_actualizacion;
+        """))
+        # Borrar tabla temporal
+        conn.execute(text("DROP TABLE reanalysis_era5_land_temp"))
+    print(f"✅ Datos cargados y actualizados en tabla general ({len(df)} filas).")
 
 # --- DISTRIBUIR A OTRAS TABLAS ---
 def distribuir_datos(engine):
@@ -253,10 +274,12 @@ def distribuir_datos(engine):
                 INSERT INTO "{tabla}" ({columnas}, fecha_actualizacion)
                 SELECT {columnas}, fecha_actualizacion
                 FROM reanalysis_era5_land
-                ON CONFLICT (valid_time, latitude, longitude) DO UPDATE
-                SET {', '.join([f'{c}=EXCLUDED.{c}' for c in columnas.split(', ')[3:]])}, fecha_actualizacion=EXCLUDED.fecha_actualizacion;
+                ON CONFLICT (valid_time, latitude, longitude)
+                DO UPDATE SET
+                    {', '.join([f"{col}=EXCLUDED.{col}" for col in columnas.split(', ')[3:]])},
+                    fecha_actualizacion = EXCLUDED.fecha_actualizacion;
             """))
-            print(f"✅ Datos copiados/actualizados en {tabla}.")
+            print(f"✅ Datos copiados en {tabla}.")
 
 # --- MAIN ---
 if __name__ == "__main__":
