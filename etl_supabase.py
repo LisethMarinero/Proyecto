@@ -219,25 +219,42 @@ def descargar_datos_csv(fecha):
 
 # --- CARGAR A TABLA GENERAL CON ON CONFLICT ---
 def cargar_tabla_general(engine, archivo_csv):
-    df = pd.read_csv(archivo_csv)
+    # Definir tipos de datos
+    tipos = {
+        'latitude': float,
+        'longitude': float,
+        't2m': float,
+        'd2m': float,
+        'stl1': float,
+        'stl2': float,
+        'stl3': float,
+        'stl4': float,
+        'swvl1': float,
+        'swvl2': float,
+        'swvl3': float,
+        'swvl4': float,
+        'u10': float,
+        'v10': float,
+        'skt': float,
+        'nieve': float,
+        'sp': float,
+        'tp': float,
+        'ssrd': float,
+        'strd': float,
+        'fecha_actualizacion': str  # convertir después a datetime
+    }
 
-    # Convertir valid_time a datetime
+    df = pd.read_csv(archivo_csv, dtype=tipos)
+
+    # Convertir valid_time y fecha_actualizacion a datetime
     df['valid_time'] = pd.to_datetime(df['valid_time'], errors='coerce')
-    
-    # Convertir todas las columnas numéricas a float
-    for col in ['latitude','longitude','t2m','d2m','stl1','stl2','stl3','stl4',
-                'swvl1','swvl2','swvl3','swvl4','u10','v10','skt','nieve','sp','tp','ssrd','strd']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    # Añadir fecha_actualizacion
     df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'], errors='coerce')
 
     with engine.begin() as conn:
-        # Cargar datos en tabla temporal
+        # Guardar en tabla temporal
         df.to_sql('reanalysis_era5_land_temp', conn, if_exists='replace', index=False)
 
-        # Insertar en tabla general evitando duplicados
+        # Insertar en tabla principal con ON CONFLICT
         conn.execute(text("""
             INSERT INTO reanalysis_era5_land AS target
             SELECT * FROM reanalysis_era5_land_temp
@@ -268,6 +285,7 @@ def cargar_tabla_general(engine, archivo_csv):
         conn.execute(text("DROP TABLE reanalysis_era5_land_temp"))
 
     print(f"✅ Datos cargados y actualizados en tabla general ({len(df)} filas).")
+
 
 # --- DISTRIBUIR A OTRAS TABLAS ---
 def distribuir_datos(engine):
