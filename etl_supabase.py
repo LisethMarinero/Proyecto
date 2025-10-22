@@ -1,4 +1,4 @@
-# etl_supabase_completo_v2.py
+# etl_supabase_v3.py
 import os
 import cdsapi
 import pandas as pd
@@ -44,9 +44,7 @@ def crear_engine():
 # --- CREAR TABLAS ---
 def crear_tablas(engine):
     with engine.begin() as conn:
-        # Tabla general
-        conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS reanalysis_era5_land (
+        columnas_base = """
             id SERIAL PRIMARY KEY,
             valid_time TIMESTAMP,
             latitude FLOAT,
@@ -71,8 +69,8 @@ def crear_tablas(engine):
             strd FLOAT,
             fecha_actualizacion TIMESTAMP,
             UNIQUE(valid_time, latitude, longitude)
-        );
-        """))
+        """
+        conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
 
         # Tablas específicas
         tablas = [
@@ -86,34 +84,7 @@ def crear_tablas(engine):
             "windeh_9u766"
         ]
         for tabla in tablas:
-            conn.execute(text(f"""
-            CREATE TABLE IF NOT EXISTS "{tabla}" (
-                id SERIAL PRIMARY KEY,
-                valid_time TIMESTAMP,
-                latitude FLOAT,
-                longitude FLOAT,
-                t2m FLOAT,
-                d2m FLOAT,
-                stl1 FLOAT,
-                stl2 FLOAT,
-                stl3 FLOAT,
-                stl4 FLOAT,
-                swvl1 FLOAT,
-                swvl2 FLOAT,
-                swvl3 FLOAT,
-                swvl4 FLOAT,
-                u10 FLOAT,
-                v10 FLOAT,
-                skt FLOAT,
-                nieve FLOAT,
-                sp FLOAT,
-                tp FLOAT,
-                ssrd FLOAT,
-                strd FLOAT,
-                fecha_actualizacion TIMESTAMP,
-                UNIQUE(valid_time, latitude, longitude)
-            );
-            """))
+            conn.execute(text(f"CREATE TABLE IF NOT EXISTS \"{tabla}\" ({columnas_base});"))
 
 # --- OBTENER ÚLTIMO DÍA DISPONIBLE ---
 def obtener_ultimo_dia_disponible(max_dias=10):
@@ -187,26 +158,28 @@ def descargar_datos_csv(fecha):
         )
         print(f"✅ Archivo descargado: {archivo_nc}")
 
-        # Descomprimir si es necesario
-        if zipfile.is_zipfile(archivo_nc):
-            with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
-                zip_ref.extractall(".")
-                archivo_nc = zip_ref.namelist()[0]
-            os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")
-        elif archivo_nc.endswith(".gz"):
-            archivo_descomprimido = archivo_nc.replace(".gz", "")
-            with gzip.open(archivo_nc, 'rb') as f_in:
-                with open(archivo_descomprimido, 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-            os.remove(archivo_nc)
-            archivo_nc = archivo_descomprimido
-
         # Convertir NetCDF → CSV
         print(f"⚙️ Convirtiendo {archivo_nc} a CSV...")
         ds = xr.open_dataset(archivo_nc, engine="netcdf4")
         df = ds.to_dataframe().reset_index()
         df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
-        df.rename(columns={"skin_temperature": "skt", "snow_cover": "nieve"}, inplace=True)
+        df.rename(columns={"skin_temperature": "skt", "snow_cover": "nieve",
+                           "2m_temperature": "t2m", "2m_dewpoint_temperature": "d2m",
+                           "surface_pressure": "sp",
+                           "total_precipitation": "tp",
+                           "surface_solar_radiation_downwards": "ssrd",
+                           "surface_thermal_radiation_downwards": "strd",
+                           "volumetric_soil_water_layer_1": "swvl1",
+                           "volumetric_soil_water_layer_2": "swvl2",
+                           "volumetric_soil_water_layer_3": "swvl3",
+                           "volumetric_soil_water_layer_4": "swvl4",
+                           "soil_temperature_level_1": "stl1",
+                           "soil_temperature_level_2": "stl2",
+                           "soil_temperature_level_3": "stl3",
+                           "soil_temperature_level_4": "stl4",
+                           "10m_u_component_of_wind": "u10",
+                           "10m_v_component_of_wind": "v10"
+                          }, inplace=True)
         df["fecha_actualizacion"] = datetime.now(pytz.UTC)
         df.to_csv(archivo_csv, index=False)
         ds.close()
@@ -217,79 +190,53 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR A TABLA GENERAL CON ON CONFLICT ---
+# --- CARGAR A TABLA GENERAL ---
 def cargar_tabla_general(engine, archivo_csv):
-    # Definir tipos de datos
-    tipos = {
-        'latitude': float,
-        'longitude': float,
-        't2m': float,
-        'd2m': float,
-        'stl1': float,
-        'stl2': float,
-        'stl3': float,
-        'stl4': float,
-        'swvl1': float,
-        'swvl2': float,
-        'swvl3': float,
-        'swvl4': float,
-        'u10': float,
-        'v10': float,
-        'skt': float,
-        'nieve': float,
-        'sp': float,
-        'tp': float,
-        'ssrd': float,
-        'strd': float,
-        'fecha_actualizacion': str  # convertir después a datetime
-    }
-
-    df = pd.read_csv(archivo_csv, dtype=tipos)
-
-    # Convertir valid_time y fecha_actualizacion a datetime
-    df['valid_time'] = pd.to_datetime(df['valid_time'], errors='coerce')
-    df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'], errors='coerce')
+    columnas = [
+        'valid_time','latitude','longitude','t2m','d2m','stl1','stl2','stl3','stl4',
+        'swvl1','swvl2','swvl3','swvl4','u10','v10','skt','nieve','sp','tp','ssrd','strd','fecha_actualizacion'
+    ]
+    df = pd.read_csv(archivo_csv)
+    # Convertir a tipos correctos
+    for col in columnas:
+        if col in ['valid_time','fecha_actualizacion']:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+        else:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
     with engine.begin() as conn:
-        # Guardar en tabla temporal
         df.to_sql('reanalysis_era5_land_temp', conn, if_exists='replace', index=False)
-
-        # Insertar en tabla principal con ON CONFLICT
-        conn.execute(text("""
-            INSERT INTO reanalysis_era5_land AS target
-            SELECT * FROM reanalysis_era5_land_temp
+        conn.execute(text(f"""
+            INSERT INTO reanalysis_era5_land ({', '.join(columnas)})
+            SELECT {', '.join(columnas)}
+            FROM reanalysis_era5_land_temp
             ON CONFLICT (valid_time, latitude, longitude)
             DO UPDATE SET
-                t2m = EXCLUDED.t2m,
-                d2m = EXCLUDED.d2m,
-                stl1 = EXCLUDED.stl1,
-                stl2 = EXCLUDED.stl2,
-                stl3 = EXCLUDED.stl3,
-                stl4 = EXCLUDED.stl4,
-                swvl1 = EXCLUDED.swvl1,
-                swvl2 = EXCLUDED.swvl2,
-                swvl3 = EXCLUDED.swvl3,
-                swvl4 = EXCLUDED.swvl4,
-                u10 = EXCLUDED.u10,
-                v10 = EXCLUDED.v10,
-                skt = EXCLUDED.skt,
-                nieve = EXCLUDED.nieve,
-                sp = EXCLUDED.sp,
-                tp = EXCLUDED.tp,
-                ssrd = EXCLUDED.ssrd,
-                strd = EXCLUDED.strd,
-                fecha_actualizacion = EXCLUDED.fecha_actualizacion;
+                t2m=EXCLUDED.t2m,
+                d2m=EXCLUDED.d2m,
+                stl1=EXCLUDED.stl1,
+                stl2=EXCLUDED.stl2,
+                stl3=EXCLUDED.stl3,
+                stl4=EXCLUDED.stl4,
+                swvl1=EXCLUDED.swvl1,
+                swvl2=EXCLUDED.swvl2,
+                swvl3=EXCLUDED.swvl3,
+                swvl4=EXCLUDED.swvl4,
+                u10=EXCLUDED.u10,
+                v10=EXCLUDED.v10,
+                skt=EXCLUDED.skt,
+                nieve=EXCLUDED.nieve,
+                sp=EXCLUDED.sp,
+                tp=EXCLUDED.tp,
+                ssrd=EXCLUDED.ssrd,
+                strd=EXCLUDED.strd,
+                fecha_actualizacion=EXCLUDED.fecha_actualizacion;
         """))
-
-        # Borrar tabla temporal
         conn.execute(text("DROP TABLE reanalysis_era5_land_temp"))
+    print(f"✅ Datos cargados en tabla general ({len(df)} filas).")
 
-    print(f"✅ Datos cargados y actualizados en tabla general ({len(df)} filas).")
-
-
-# --- DISTRIBUIR A OTRAS TABLAS ---
+# --- DISTRIBUIR A TABLAS ESPECÍFICAS ---
 def distribuir_datos(engine):
-    print("🔁 Distribuyendo datos a tablas específicas...")
     tablas = {
         "pressure-precipitationw8_rcxxb": "valid_time, latitude, longitude, sp, tp",
         "radiation-heatcpg03hs6": "valid_time, latitude, longitude, ssrd, strd",
@@ -301,15 +248,17 @@ def distribuir_datos(engine):
         "windeh_9u766": "valid_time, latitude, longitude, u10, v10"
     }
     with engine.begin() as conn:
-        for tabla, columnas in tablas.items():
+        for tabla, cols in tablas.items():
+            lista_cols = [c.strip() for c in cols.split(',')]
+            updates = [f"{c}=EXCLUDED.{c}" for c in lista_cols[3:]]
             conn.execute(text(f"""
-                INSERT INTO "{tabla}" ({columnas}, fecha_actualizacion)
-                SELECT {columnas}, fecha_actualizacion
+                INSERT INTO "{tabla}" ({cols}, fecha_actualizacion)
+                SELECT {cols}, fecha_actualizacion
                 FROM reanalysis_era5_land
                 ON CONFLICT (valid_time, latitude, longitude)
                 DO UPDATE SET
-                    {', '.join([f"{col}=EXCLUDED.{col}" for col in columnas.split(', ')[3:]])},
-                    fecha_actualizacion = EXCLUDED.fecha_actualizacion;
+                    {', '.join(updates)},
+                    fecha_actualizacion=EXCLUDED.fecha_actualizacion;
             """))
             print(f"✅ Datos copiados en {tabla}.")
 
