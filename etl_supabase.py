@@ -266,29 +266,36 @@ def cargar_tabla_general(engine, archivo_csv):
 
 
 def distribuir_datos(engine):
+    # Definir columnas por tabla con el orden exacto de la tabla en la base de datos
     tablas = {
-        "pressure-precipitationw8_rcxxb": "valid_time, latitude, longitude, sp, tp",
-        "radiation-heatcpg03hs6": "valid_time, latitude, longitude, ssrd, strd",
-        "skin-temperaturehke46ner": "valid_time, latitude, longitude, skt",
-        "snowhy9lgjol": "valid_time, latitude, longitude, snowc",
-        "soil-waterlxqhzxz9": "valid_time, latitude, longitude, swvl1, swvl2, swvl3, swvl4",
-        "temperatureedviyn5g": "valid_time, latitude, longitude, d2m, t2m",
-        "temperaturepf7g_14p": "valid_time, latitude, longitude, stl1, stl2, stl3, stl4",
-        "windeh_9u766": "valid_time, latitude, longitude, u10, v10"
+        "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
+        "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
+        "skin-temperaturehke46ner": ["valid_time", "skt", "latitude", "longitude"],
+        "snowhy9lgjol": ["valid_time", "nieve", "latitude", "longitude"],
+        "soil-waterlxqhzxz9": ["valid_time", "swvl1", "swvl2", "swvl3", "swvl4", "latitude", "longitude"],
+        "temperatureedviyn5g": ["valid_time", "d2m", "t2m", "latitude", "longitude"],
+        "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
+        "windeh_9u766": ["valid_time", "u10", "v10", "latitude", "longitude"]
     }
+
     with engine.begin() as conn:
         for tabla, cols in tablas.items():
-            lista_cols = [c.strip() for c in cols.split(',')]
-            updates = [f"{c}=EXCLUDED.{c}" for c in lista_cols[3:]]
-            conn.execute(text(f"""
-                INSERT INTO "{tabla}" ({cols}, fecha_actualizacion)
-                SELECT {cols}, fecha_actualizacion
+            # Agregar fecha_actualizacion al final
+            insert_cols = cols + ["fecha_actualizacion"]
+            # Columnas para UPDATE (todas menos las de la clave primaria: valid_time, latitude, longitude)
+            clave = ["valid_time", "latitude", "longitude"]
+            update_cols = [f"{c}=EXCLUDED.{c}" for c in insert_cols if c not in clave]
+
+            # Construir query
+            query = f"""
+                INSERT INTO "{tabla}" ({', '.join(insert_cols)})
+                SELECT {', '.join(insert_cols)}
                 FROM reanalysis_era5_land
                 ON CONFLICT (valid_time, latitude, longitude)
                 DO UPDATE SET
-                    {', '.join(updates)},
-                    fecha_actualizacion=EXCLUDED.fecha_actualizacion;
-            """))
+                    {', '.join(update_cols)};
+            """
+            conn.execute(text(query))
             print(f"✅ Datos copiados en {tabla}.")
 
 # --- MAIN ---
