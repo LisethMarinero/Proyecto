@@ -1,9 +1,10 @@
-# etl_supabase_completo.py
+# etl_supabase_completo_actualizado.py
 import os
 import cdsapi
 import pandas as pd
 import xarray as xr
 from sqlalchemy import create_engine, text
+from sqlalchemy.dialects.postgresql import insert
 from datetime import datetime, timedelta, timezone
 import pytz
 import gzip
@@ -69,7 +70,8 @@ def crear_tablas(engine):
             tp FLOAT,
             ssrd FLOAT,
             strd FLOAT,
-            fecha_actualizacion TIMESTAMP
+            fecha_actualizacion TIMESTAMP,
+            UNIQUE(valid_time, latitude, longitude)
         );
         """))
 
@@ -109,7 +111,8 @@ def crear_tablas(engine):
                 tp FLOAT,
                 ssrd FLOAT,
                 strd FLOAT,
-                fecha_actualizacion TIMESTAMP
+                fecha_actualizacion TIMESTAMP,
+                UNIQUE(valid_time, latitude, longitude)
             );
             """))
 
@@ -215,12 +218,21 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR A TABLA GENERAL ---
+# --- CARGAR A TABLA GENERAL CON ACTUALIZACIÓN ---
 def cargar_tabla_general(engine, archivo_csv):
     df = pd.read_csv(archivo_csv)
+    df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'])
+
     with engine.begin() as conn:
-        df.to_sql("reanalysis_era5_land", conn, if_exists="append", index=False)
-    print(f"✅ Datos guardados en tabla general reanalysis_era5_land ({len(df)} filas).")
+        tabla = "reanalysis_era5_land"
+        registros = df.to_dict(orient="records")
+        stmt = insert(text(tabla)).values(registros)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['valid_time', 'latitude', 'longitude'],
+            set_={c: stmt.excluded[c] for c in df.columns if c not in ['valid_time','latitude','longitude','id']}
+        )
+        conn.execute(stmt)
+    print(f"✅ Datos guardados/actualizados en tabla general {tabla} ({len(df)} filas).")
 
 # --- DISTRIBUIR A OTRAS TABLAS ---
 def distribuir_datos(engine):
@@ -240,9 +252,11 @@ def distribuir_datos(engine):
             conn.execute(text(f"""
                 INSERT INTO "{tabla}" ({columnas}, fecha_actualizacion)
                 SELECT {columnas}, fecha_actualizacion
-                FROM reanalysis_era5_land;
+                FROM reanalysis_era5_land
+                ON CONFLICT (valid_time, latitude, longitude) DO UPDATE
+                SET {', '.join([f'{c}=EXCLUDED.{c}' for c in columnas.split(', ')[3:]])}, fecha_actualizacion=EXCLUDED.fecha_actualizacion;
             """))
-            print(f"✅ Datos copiados en {tabla}.")
+            print(f"✅ Datos copiados/actualizados en {tabla}.")
 
 # --- MAIN ---
 if __name__ == "__main__":
