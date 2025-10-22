@@ -41,21 +41,51 @@ def crear_engine():
     )
     return create_engine(conexion, connect_args={'sslmode': 'require'})
 
-# --- CREAR TABLAS SI NO EXISTEN ---
-def crear_tablas_si_no_existen(engine):
-    tablas = [
-        "pressure-precipitationw8_rcxxb",
-        "radiation-heatcpg03hs6",
-        "skin-temperaturehke46ner",
-        "snowhy9lgjol",
-        "soil-waterlxqhzxz9",
-        "temperatureedviyn5g",
-        "temperaturepf7g_14p",
-        "windeh_9u766"
-    ]
+# --- CREAR TABLAS ---
+def crear_tablas(engine):
     with engine.begin() as conn:
+        # Tabla general
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS reanalysis_era5_land (
+            id SERIAL PRIMARY KEY,
+            valid_time TIMESTAMP,
+            latitude FLOAT,
+            longitude FLOAT,
+            t2m FLOAT,
+            d2m FLOAT,
+            stl1 FLOAT,
+            stl2 FLOAT,
+            stl3 FLOAT,
+            stl4 FLOAT,
+            swvl1 FLOAT,
+            swvl2 FLOAT,
+            swvl3 FLOAT,
+            swvl4 FLOAT,
+            u10 FLOAT,
+            v10 FLOAT,
+            skt FLOAT,
+            nieve FLOAT,
+            sp FLOAT,
+            tp FLOAT,
+            ssrd FLOAT,
+            strd FLOAT,
+            fecha_actualizacion TIMESTAMP
+        );
+        """))
+
+        # Tablas específicas
+        tablas = [
+            "pressure-precipitationw8_rcxxb",
+            "radiation-heatcpg03hs6",
+            "skin-temperaturehke46ner",
+            "snowhy9lgjol",
+            "soil-waterlxqhzxz9",
+            "temperatureedviyn5g",
+            "temperaturepf7g_14p",
+            "windeh_9u766"
+        ]
         for tabla in tablas:
-            sql = text(f"""
+            conn.execute(text(f"""
             CREATE TABLE IF NOT EXISTS "{tabla}" (
                 id SERIAL PRIMARY KEY,
                 valid_time TIMESTAMP,
@@ -81,8 +111,7 @@ def crear_tablas_si_no_existen(engine):
                 strd FLOAT,
                 fecha_actualizacion TIMESTAMP
             );
-            """)
-            conn.execute(sql)
+            """))
 
 # --- OBTENER ÚLTIMO DÍA DISPONIBLE ---
 def obtener_ultimo_dia_disponible(max_dias=10):
@@ -156,15 +185,13 @@ def descargar_datos_csv(fecha):
         )
         print(f"✅ Archivo descargado: {archivo_nc}")
 
-        # Manejo ZIP/GZ
+        # Descomprimir si es necesario
         if zipfile.is_zipfile(archivo_nc):
-            print("🗜️ Descomprimiendo ZIP...")
             with zipfile.ZipFile(archivo_nc, 'r') as zip_ref:
                 zip_ref.extractall(".")
                 archivo_nc = zip_ref.namelist()[0]
             os.remove(f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.nc")
         elif archivo_nc.endswith(".gz"):
-            print("🗜️ Descomprimiendo GZ...")
             archivo_descomprimido = archivo_nc.replace(".gz", "")
             with gzip.open(archivo_nc, 'rb') as f_in:
                 with open(archivo_descomprimido, 'wb') as f_out:
@@ -172,12 +199,12 @@ def descargar_datos_csv(fecha):
             os.remove(archivo_nc)
             archivo_nc = archivo_descomprimido
 
-        # NetCDF → CSV
+        # Convertir NetCDF → CSV
         print(f"⚙️ Convirtiendo {archivo_nc} a CSV...")
         ds = xr.open_dataset(archivo_nc, engine="netcdf4")
         df = ds.to_dataframe().reset_index()
         df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
-        df.rename(columns={"skin_temperature":"skt","snow_cover":"nieve"}, inplace=True)
+        df.rename(columns={"skin_temperature": "skt", "snow_cover": "nieve"}, inplace=True)
         df["fecha_actualizacion"] = datetime.now(pytz.UTC)
         df.to_csv(archivo_csv, index=False)
         ds.close()
@@ -188,54 +215,46 @@ def descargar_datos_csv(fecha):
         print(f"❌ Error durante descarga/conversión: {e}")
         return None
 
-# --- CARGAR CSV (sin eliminar duplicados) ---
-def cargar_a_supabase(archivo_csv):
-    if not archivo_csv or not os.path.exists(archivo_csv):
-        print("⚠️ No hay CSV válido para cargar.")
-        return
-
-    engine = crear_engine()
-    crear_tablas_si_no_existen(engine)
-
+# --- CARGAR A TABLA GENERAL ---
+def cargar_tabla_general(engine, archivo_csv):
     df = pd.read_csv(archivo_csv)
-    tablas = {
-        "pressure-precipitationw8_rcxxb":["valid_time","sp","tp","latitude","longitude"],
-        "radiation-heatcpg03hs6":["valid_time","ssrd","strd","latitude","longitude"],
-        "skin-temperaturehke46ner":["valid_time","skt","latitude","longitude"],
-        "snowhy9lgjol":["valid_time","nieve","latitude","longitude"],
-        "soil-waterlxqhzxz9":["valid_time","swvl1","swvl2","swvl3","swvl4","latitude","longitude"],
-        "temperatureedviyn5g":["valid_time","d2m","t2m","latitude","longitude"],
-        "temperaturepf7g_14p":["valid_time","stl1","stl2","stl3","stl4","latitude","longitude"],
-        "windeh_9u766":["valid_time","u10","v10","latitude","longitude"]
-    }
+    with engine.begin() as conn:
+        df.to_sql("reanalysis_era5_land", conn, if_exists="append", index=False)
+    print(f"✅ Datos guardados en tabla general reanalysis_era5_land ({len(df)} filas).")
 
-    for tabla, cols in tablas.items():
-        cols_validas = [c for c in cols if c in df.columns]
-        if not cols_validas:
-            print(f"⚠️ Columnas no encontradas para {tabla}")
-            continue
-        sub_df = df[cols_validas].dropna(how="all")
-        if sub_df.empty:
-            print(f"⚠️ Sin datos para {tabla}")
-            continue
-        with engine.begin() as conn:
-            sub_df.to_sql(f"{tabla}_temp", conn, if_exists="replace", index=False)
-            cols_insert = ", ".join(cols_validas)
-            insert_sql = text(f"""
-                INSERT INTO "{tabla}" ({cols_insert})
-                SELECT {cols_insert} FROM "{tabla}_temp";
-                DROP TABLE "{tabla}_temp";
-            """)
-            conn.execute(insert_sql)
-            print(f"✅ {tabla}: {len(sub_df)} filas insertadas (sin eliminar duplicados).")
+# --- DISTRIBUIR A OTRAS TABLAS ---
+def distribuir_datos(engine):
+    print("🔁 Distribuyendo datos a tablas específicas...")
+    tablas = {
+        "pressure-precipitationw8_rcxxb": "valid_time, latitude, longitude, sp, tp",
+        "radiation-heatcpg03hs6": "valid_time, latitude, longitude, ssrd, strd",
+        "skin-temperaturehke46ner": "valid_time, latitude, longitude, skt",
+        "snowhy9lgjol": "valid_time, latitude, longitude, nieve",
+        "soil-waterlxqhzxz9": "valid_time, latitude, longitude, swvl1, swvl2, swvl3, swvl4",
+        "temperatureedviyn5g": "valid_time, latitude, longitude, d2m, t2m",
+        "temperaturepf7g_14p": "valid_time, latitude, longitude, stl1, stl2, stl3, stl4",
+        "windeh_9u766": "valid_time, latitude, longitude, u10, v10"
+    }
+    with engine.begin() as conn:
+        for tabla, columnas in tablas.items():
+            conn.execute(text(f"""
+                INSERT INTO "{tabla}" ({columnas}, fecha_actualizacion)
+                SELECT {columnas}, fecha_actualizacion
+                FROM reanalysis_era5_land;
+            """))
+            print(f"✅ Datos copiados en {tabla}.")
 
 # --- MAIN ---
 if __name__ == "__main__":
     print("🚀 Iniciando ETL completo ERA5-Land...")
+    engine = crear_engine()
+    crear_tablas(engine)
     fecha = obtener_ultimo_dia_disponible()
     if fecha:
         archivo_csv = descargar_datos_csv(fecha)
-        cargar_a_supabase(archivo_csv)
+        if archivo_csv:
+            cargar_tabla_general(engine, archivo_csv)
+            distribuir_datos(engine)
     else:
         print("⚠️ No se encontró una fecha con datos disponibles.")
     print("🎯 ETL finalizado correctamente.")
