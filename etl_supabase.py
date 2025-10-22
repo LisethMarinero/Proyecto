@@ -220,7 +220,19 @@ def descargar_datos_csv(fecha):
 # --- CARGAR A TABLA GENERAL CON ON CONFLICT ---
 def cargar_tabla_general(engine, archivo_csv):
     df = pd.read_csv(archivo_csv)
-    df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'])
+
+    # Convertir valid_time a datetime
+    df['valid_time'] = pd.to_datetime(df['valid_time'], errors='coerce')
+    
+    # Convertir todas las columnas numéricas a float
+    for col in ['latitude','longitude','t2m','d2m','stl1','stl2','stl3','stl4',
+                'swvl1','swvl2','swvl3','swvl4','u10','v10','skt','nieve','sp','tp','ssrd','strd']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Añadir fecha_actualizacion
+    df['fecha_actualizacion'] = pd.to_datetime(df['fecha_actualizacion'], errors='coerce')
+
     with engine.begin() as conn:
         # Cargar datos en tabla temporal
         df.to_sql('reanalysis_era5_land_temp', conn, if_exists='replace', index=False)
@@ -251,8 +263,10 @@ def cargar_tabla_general(engine, archivo_csv):
                 strd = EXCLUDED.strd,
                 fecha_actualizacion = EXCLUDED.fecha_actualizacion;
         """))
+
         # Borrar tabla temporal
         conn.execute(text("DROP TABLE reanalysis_era5_land_temp"))
+
     print(f"✅ Datos cargados y actualizados en tabla general ({len(df)} filas).")
 
 # --- DISTRIBUIR A OTRAS TABLAS ---
