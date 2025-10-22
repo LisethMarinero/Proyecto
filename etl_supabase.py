@@ -266,12 +266,11 @@ def cargar_tabla_general(engine, archivo_csv):
 
 
 def distribuir_datos(engine):
-    # Definir columnas por tabla con el orden exacto de la tabla en la base de datos
     tablas = {
         "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
         "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
         "skin-temperaturehke46ner": ["valid_time", "skt", "latitude", "longitude"],
-        "snowhy9lgjol": ["valid_time", "snowc", "latitude", "longitude"],
+        "snowhy9lgjol": ["valid_time", "snowc", "latitude", "longitude"],  # usa snowc directamente
         "soil-waterlxqhzxz9": ["valid_time", "swvl1", "swvl2", "swvl3", "swvl4", "latitude", "longitude"],
         "temperatureedviyn5g": ["valid_time", "d2m", "t2m", "latitude", "longitude"],
         "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
@@ -280,16 +279,15 @@ def distribuir_datos(engine):
 
     with engine.begin() as conn:
         for tabla, cols in tablas.items():
-            # Agregar fecha_actualizacion al final
             insert_cols = cols + ["fecha_actualizacion"]
-            # Columnas para UPDATE (todas menos las de la clave primaria: valid_time, latitude, longitude)
             clave = ["valid_time", "latitude", "longitude"]
             update_cols = [f"{c}=EXCLUDED.{c}" for c in insert_cols if c not in clave]
 
-            # Construir query
+            select_cols = ", ".join(insert_cols)
+            
             query = f"""
                 INSERT INTO "{tabla}" ({', '.join(insert_cols)})
-                SELECT {', '.join(insert_cols)}
+                SELECT {select_cols}
                 FROM reanalysis_era5_land
                 ON CONFLICT (valid_time, latitude, longitude)
                 DO UPDATE SET
@@ -297,6 +295,7 @@ def distribuir_datos(engine):
             """
             conn.execute(text(query))
             print(f"✅ Datos copiados en {tabla}.")
+
 
 # --- MAIN ---
 if __name__ == "__main__":
