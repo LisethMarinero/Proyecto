@@ -140,7 +140,7 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                         "2m_temperature","2m_dewpoint_temperature","surface_pressure",
                         "total_precipitation","surface_solar_radiation_downwards",
                         "surface_thermal_radiation_downwards","skin_temperature",
-                        "snow_cover","volumetric_soil_water_layer_1",
+                        "snowc","volumetric_soil_water_layer_1",
                         "volumetric_soil_water_layer_2","volumetric_soil_water_layer_3",
                         "volumetric_soil_water_layer_4","soil_temperature_level_1",
                         "soil_temperature_level_2","soil_temperature_level_3",
@@ -189,7 +189,7 @@ def descargar_datos_csv(fecha, max_reintentos=5):
             # Renombrar columnas
             df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
             df.rename(columns={
-                "skin_temperature": "skt", "snow_cover": "nieve",
+                "skin_temperature": "skt", "snowc": "nieve",
                 "2m_temperature": "t2m", "2m_dewpoint_temperature": "d2m",
                 "surface_pressure": "sp",
                 "total_precipitation": "tp",
@@ -279,7 +279,7 @@ def distribuir_datos(engine):
         "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
         "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
         "skin-temperaturehke46ner": ["valid_time", "skt", "latitude", "longitude"],
-        "snowhy9lgjol": ["valid_time", "snowc", "latitude", "longitude"],
+        "snowhy9lgjol": ["valid_time", "snowc", "nieve", "latitude", "longitude"],
         "soil-waterlxqhzxz9": ["valid_time", "swvl1", "swvl2", "swvl3", "swvl4", "latitude", "longitude"],
         "temperatureedviyn5g": ["valid_time", "d2m", "t2m", "latitude", "longitude"],
         "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
