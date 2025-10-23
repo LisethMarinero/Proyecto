@@ -1,4 +1,4 @@
-# etl_supabase_v5.py
+# etl_supabase_v6.py
 import os
 import glob
 import shutil
@@ -59,14 +59,13 @@ def crear_tablas(engine):
     skt DOUBLE PRECISION,
     nieve DOUBLE PRECISION,
     snowc DOUBLE PRECISION,
-    fecha_actualizacion TEXT,
-    UNIQUE(valid_time, latitude, longitude)
+    fecha_actualizacion TEXT
 """
 
         # Crear la tabla principal
         conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
 
-        # Crear las tablas secundarias (subconjuntos de datos)
+        # Crear tablas secundarias
         tablas = [
             "pressure-precipitationw8_rcxxb",
             "radiation-heatcpg03hs6",
@@ -79,40 +78,6 @@ def crear_tablas(engine):
         ]
         for tabla in tablas:
             conn.execute(text(f"CREATE TABLE IF NOT EXISTS \"{tabla}\" ({columnas_base});"))
-
-
-# --- OBTENER ÚLTIMO DÍA DISPONIBLE ---
-def obtener_ultimo_dia_disponible(max_dias=10):
-    print("🔍 Buscando la última fecha disponible de ERA5-Land...")
-    c = cdsapi.Client()
-    hoy = datetime.now(timezone.utc)
-    for i in range(1, max_dias + 1):
-        fecha = hoy - timedelta(days=i)
-        año, mes, dia = fecha.year, fecha.month, fecha.day
-        archivo_prueba = f"prueba_{año}_{mes:02d}_{dia:02d}.nc"
-        try:
-            c.retrieve(
-                'reanalysis-era5-land',
-                {
-                    'format': 'netcdf',
-                    'variable': ['2m_temperature'],
-                    'year': [str(año)],
-                    'month': [f"{mes:02d}"],
-                    'day': [f"{dia:02d}"],
-                    'time': ['00:00'],
-                    'area': [14, -90, 13, -89],
-                },
-                archivo_prueba
-            )
-            if os.path.getsize(archivo_prueba) < 1024:
-                raise ValueError("Archivo NC muy pequeño, posiblemente no válido")
-            os.remove(archivo_prueba)
-            print(f"✅ Última fecha disponible: {fecha.strftime('%Y-%m-%d')}")
-            return fecha
-        except Exception as e:
-            print(f"⚠️ {fecha.strftime('%Y-%m-%d')} no disponible: {e}")
-    print("❌ No se encontró una fecha disponible en los últimos 10 días.")
-    return None
 
 # --- DESCARGAR Y CONVERTIR NETCDF A CSV ---
 def descargar_datos_csv(fecha, max_reintentos=5):
@@ -129,9 +94,7 @@ def descargar_datos_csv(fecha, max_reintentos=5):
             print(f"🌍 Descargando datos para {año}-{mes:02d}-{dia:02d} (Intento {reintento + 1})...")
             c = cdsapi.Client()
 
-            # Nombre base para múltiples archivos
             archivo_base = f"data_{año}_{mes:02d}_{dia:02d}_"
-
             c.retrieve(
                 'reanalysis-era5-land',
                 {
@@ -156,7 +119,6 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                 archivo_base + "0.nc"
             )
 
-            # Esperar un momento para que se creen todos los archivos
             time.sleep(5)
             archivos_nc = sorted(glob.glob("data_*.nc"))
             if not archivos_nc:
@@ -164,7 +126,6 @@ def descargar_datos_csv(fecha, max_reintentos=5):
 
             datasets = []
             for f in archivos_nc:
-                # Descomprimir si es .zip o .gz
                 if zipfile.is_zipfile(f):
                     with zipfile.ZipFile(f, 'r') as zip_ref:
                         zip_ref.extractall(".")
@@ -182,11 +143,8 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                 ds = xr.open_dataset(f, engine="netcdf4")
                 datasets.append(ds)
 
-            # Merge datasets (variables diferentes)
             ds_total = xr.merge(datasets)
             df = ds_total.to_dataframe().reset_index()
-
-            # Renombrar columnas
             df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
             df.rename(columns={
                 "skin_temperature": "skt", "snowc": "nieve",
@@ -211,7 +169,6 @@ def descargar_datos_csv(fecha, max_reintentos=5):
             df.to_csv(archivo_csv, index=False)
             print(f"✅ CSV generado: {archivo_csv}")
 
-            # Cerrar datasets y limpiar NetCDF
             for ds, f in zip(datasets, archivos_nc):
                 ds.close()
                 if os.path.exists(f):
@@ -231,12 +188,9 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                 print("❌ Se alcanzó el máximo de reintentos. No se pudo generar CSV.")
                 return None
 
-# --- CARGAR Y DISTRIBUIR DATOS ---
+# --- CARGAR TABLA PRINCIPAL ---
 def cargar_tabla_general(engine, archivo_csv):
-    # Leer CSV
     df = pd.read_csv(archivo_csv)
-    
-    # Columnas esperadas en la tabla
     columnas_esperadas = [
         'valid_time','latitude','longitude','t2m','d2m',
         'stl1','stl2','stl3','stl4',
@@ -244,37 +198,24 @@ def cargar_tabla_general(engine, archivo_csv):
         'u10','v10','skt','nieve','snowc','sp','tp','ssrd','strd',
         'fecha_actualizacion'
     ]
-    
-    # Crear columnas faltantes y llenarlas con NaN
     for col in columnas_esperadas:
         if col not in df.columns:
-            df[col] = pd.NA  # O np.nan
-    
-    # Convertir columnas numéricas a float
+            df[col] = pd.NA
     columnas_float = [c for c in columnas_esperadas if c not in ['valid_time', 'fecha_actualizacion']]
     for col in columnas_float:
         df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Cargar a la tabla temporal
     df.to_sql('reanalysis_era5_land_temp', engine, if_exists='replace', index=False)
-    
-    # Insertar en la tabla final con ON CONFLICT
     with engine.begin() as conn:
         conn.execute(text(f"""
             INSERT INTO reanalysis_era5_land ({', '.join(columnas_esperadas)})
             SELECT {', '.join(columnas_esperadas)}
-            FROM reanalysis_era5_land_temp
-            ON CONFLICT (valid_time, latitude, longitude)
-            DO UPDATE SET
-                {', '.join([f"{c}=EXCLUDED.{c}" for c in columnas_esperadas if c not in ['valid_time', 'latitude', 'longitude']])};
+            FROM reanalysis_era5_land_temp;
         """))
+    print("✅ Datos cargados en tabla principal.")
 
-    print("✅ Datos cargados correctamente.")
-
-
+# --- DISTRIBUIR DATOS A TABLAS SECUNDARIAS ---
 def distribuir_datos(engine):
     print("📤 Distribuyendo datos a tablas secundarias...")
-
     tablas = {
         "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
         "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
@@ -285,17 +226,14 @@ def distribuir_datos(engine):
         "temperaturepf7g_14p": ["valid_time", "stl1", "stl2", "stl3", "stl4", "latitude", "longitude"],
         "windeh_9u766": ["valid_time", "u10", "v10", "latitude", "longitude"]
     }
-
     with engine.begin() as conn:
         for tabla, cols in tablas.items():
             insert_cols = cols + ["fecha_actualizacion"]
             clave = ["valid_time", "latitude", "longitude"]
-            
             update_cols = [f"{c}=EXCLUDED.{c}" for c in insert_cols if c not in clave and c != "fecha_actualizacion"]
-            update_cols.append("fecha_actualizacion=EXCLUDED.fecha_actualizacion")  # ✅ fecha siempre se actualiza
-
+            update_cols.append("fecha_actualizacion=EXCLUDED.fecha_actualizacion")
             select_cols = ", ".join(insert_cols)
-
+            # Insertar solo si la segunda columna (indicativa de valor) no es null
             query = f"""
                 INSERT INTO "{tabla}" ({', '.join(insert_cols)})
                 SELECT {select_cols}
@@ -304,27 +242,31 @@ def distribuir_datos(engine):
                 ON CONFLICT (valid_time, latitude, longitude)
                 DO UPDATE SET {', '.join(update_cols)};
             """
-
             try:
                 conn.execute(text(query))
-                print(f"✅ Datos copiados correctamente en {tabla}.")
+                print(f"✅ Datos copiados en {tabla}.")
             except Exception as e:
                 print(f"⚠️ Error copiando datos en {tabla}: {e}")
 
-
 # --- MAIN ---
 if __name__ == "__main__":
-    print("🚀 Iniciando ETL completo ERA5-Land...")
+    print("🚀 Iniciando ETL completo ERA5-Land automático...")
     engine = crear_engine()
     crear_tablas(engine)
-    fecha = obtener_ultimo_dia_disponible()
-    if fecha:
-        archivo_csv = descargar_datos_csv(fecha)
-        if archivo_csv:
-            cargar_tabla_general(engine, archivo_csv)
-            distribuir_datos(engine)
-    else:
-        print("⚠️ No se encontró una fecha con datos disponibles.")
+
+    # Desde el 17 de octubre de 2025 hasta el día más reciente disponible
+    fecha_inicio = datetime(2025, 10, 17, tzinfo=timezone.utc)
+    fecha_hoy = datetime.now(timezone.utc)
+
+    fecha = fecha_inicio
+    while fecha <= fecha_hoy:
+        try:
+            archivo_csv = descargar_datos_csv(fecha)
+            if archivo_csv:
+                cargar_tabla_general(engine, archivo_csv)
+                distribuir_datos(engine)
+        except Exception as e:
+            print(f"⚠️ Error procesando {fecha.strftime('%Y-%m-%d')}: {e}")
+        fecha += timedelta(days=1)
+
     print("🎯 ETL finalizado correctamente.")
-
-
