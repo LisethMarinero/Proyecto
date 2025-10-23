@@ -275,7 +275,6 @@ def cargar_tabla_general(engine, archivo_csv):
 def distribuir_datos(engine):
     print("📤 Distribuyendo datos a tablas secundarias...")
 
-    # Orden exacto de columnas según tu base de datos
     tablas = {
         "pressure-precipitationw8_rcxxb": ["valid_time", "sp", "tp", "latitude", "longitude"],
         "radiation-heatcpg03hs6": ["valid_time", "ssrd", "strd", "latitude", "longitude"],
@@ -289,12 +288,12 @@ def distribuir_datos(engine):
 
     with engine.begin() as conn:
         for tabla, cols in tablas.items():
-            # Añadimos la columna de fecha de actualización
             insert_cols = cols + ["fecha_actualizacion"]
             clave = ["valid_time", "latitude", "longitude"]
-            update_cols = [f"{c}=EXCLUDED.{c}" for c in insert_cols if c not in clave]
+            
+            update_cols = [f"{c}=EXCLUDED.{c}" for c in insert_cols if c not in clave and c != "fecha_actualizacion"]
+            update_cols.append("fecha_actualizacion=EXCLUDED.fecha_actualizacion")  # ✅ fecha siempre se actualiza
 
-            # Construimos el SELECT según las columnas exactas
             select_cols = ", ".join(insert_cols)
 
             query = f"""
@@ -311,7 +310,6 @@ def distribuir_datos(engine):
                 print(f"✅ Datos copiados correctamente en {tabla}.")
             except Exception as e:
                 print(f"⚠️ Error copiando datos en {tabla}: {e}")
-
 
 
 # --- MAIN ---
