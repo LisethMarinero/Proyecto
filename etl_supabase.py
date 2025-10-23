@@ -34,31 +34,32 @@ def crear_engine():
 def crear_tablas(engine):
     with engine.begin() as conn:
         columnas_base = """
-            id SERIAL PRIMARY KEY,
-            valid_time TIMESTAMP,
-            latitude FLOAT,
-            longitude FLOAT,
-            t2m FLOAT,
-            d2m FLOAT,
-            stl1 FLOAT,
-            stl2 FLOAT,
-            stl3 FLOAT,
-            stl4 FLOAT,
-            swvl1 FLOAT,
-            swvl2 FLOAT,
-            swvl3 FLOAT,
-            swvl4 FLOAT,
-            u10 FLOAT,
-            v10 FLOAT,
-            skt FLOAT,
-            nieve FLOAT,
-            sp FLOAT,
-            tp FLOAT,
-            ssrd FLOAT,
-            strd FLOAT,
-            fecha_actualizacion TIMESTAMP,
-            UNIQUE(valid_time, latitude, longitude)
-        """
+    id SERIAL PRIMARY KEY,
+    valid_time TEXT,
+    latitude FLOAT,
+    longitude FLOAT,
+    t2m FLOAT,
+    d2m FLOAT,
+    stl1 FLOAT,
+    stl2 FLOAT,
+    stl3 FLOAT,
+    stl4 FLOAT,
+    swvl1 FLOAT,
+    swvl2 FLOAT,
+    swvl3 FLOAT,
+    swvl4 FLOAT,
+    u10 FLOAT,
+    v10 FLOAT,
+    skt FLOAT,
+    nieve FLOAT,
+    sp FLOAT,
+    tp FLOAT,
+    ssrd FLOAT,
+    strd FLOAT,
+    fecha_actualizacion TEXT,
+    UNIQUE(valid_time, latitude, longitude)
+"""
+
         conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
 
         tablas = [
