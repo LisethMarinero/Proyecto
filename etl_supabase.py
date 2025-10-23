@@ -100,7 +100,7 @@ def obtener_ultimo_dia_disponible(max_dias=10):
                     'month': [f"{mes:02d}"],
                     'day': [f"{dia:02d}"],
                     'time': ['00:00'],
-                    'area': [14, -90, 13, -89],
+                    'area': [13, -89, 13, -89],
                 },
                 archivo_prueba
             )
