@@ -36,32 +36,37 @@ def crear_tablas(engine):
         columnas_base = """
     id SERIAL PRIMARY KEY,
     valid_time TEXT,
-    latitude FLOAT,
-    longitude FLOAT,
-    t2m FLOAT,
-    d2m FLOAT,
-    stl1 FLOAT,
-    stl2 FLOAT,
-    stl3 FLOAT,
-    stl4 FLOAT,
-    swvl1 FLOAT,
-    swvl2 FLOAT,
-    swvl3 FLOAT,
-    swvl4 FLOAT,
-    u10 FLOAT,
-    v10 FLOAT,
-    skt FLOAT,
-    nieve FLOAT,
-    sp FLOAT,
-    tp FLOAT,
-    ssrd FLOAT,
-    strd FLOAT,
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    swvl1 DOUBLE PRECISION,
+    swvl2 DOUBLE PRECISION,
+    swvl3 DOUBLE PRECISION,
+    swvl4 DOUBLE PRECISION,
+    stl1 DOUBLE PRECISION,
+    stl2 DOUBLE PRECISION,
+    stl3 DOUBLE PRECISION,
+    stl4 DOUBLE PRECISION,
+    number BIGINT,
+    expver BIGINT,
+    sp DOUBLE PRECISION,
+    u10 DOUBLE PRECISION,
+    v10 DOUBLE PRECISION,
+    t2m DOUBLE PRECISION,
+    d2m DOUBLE PRECISION,
+    ssrd DOUBLE PRECISION,
+    strd DOUBLE PRECISION,
+    tp DOUBLE PRECISION,
+    skt DOUBLE PRECISION,
+    nieve DOUBLE PRECISION,
+    snowc DOUBLE PRECISION,
     fecha_actualizacion TEXT,
     UNIQUE(valid_time, latitude, longitude)
 """
 
+        # Crear la tabla principal
         conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
 
+        # Crear las tablas secundarias (subconjuntos de datos)
         tablas = [
             "pressure-precipitationw8_rcxxb",
             "radiation-heatcpg03hs6",
@@ -74,6 +79,7 @@ def crear_tablas(engine):
         ]
         for tabla in tablas:
             conn.execute(text(f"CREATE TABLE IF NOT EXISTS \"{tabla}\" ({columnas_base});"))
+
 
 # --- OBTENER ÚLTIMO DÍA DISPONIBLE ---
 def obtener_ultimo_dia_disponible(max_dias=10):
@@ -235,7 +241,7 @@ def cargar_tabla_general(engine, archivo_csv):
         'valid_time','latitude','longitude','t2m','d2m',
         'stl1','stl2','stl3','stl4',
         'swvl1','swvl2','swvl3','swvl4',
-        'u10','v10','skt','snowc','sp','tp','ssrd','strd',
+        'u10','v10','skt','nieve','snowc','sp','tp','ssrd','strd',
         'fecha_actualizacion'
     ]
     
