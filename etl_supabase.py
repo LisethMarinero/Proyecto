@@ -235,7 +235,7 @@ def cargar_tabla_general(engine, archivo_csv):
         'valid_time','latitude','longitude','t2m','d2m',
         'stl1','stl2','stl3','stl4',
         'swvl1','swvl2','swvl3','swvl4',
-        'u10','v10','skt','nieve','sp','tp','ssrd','strd',
+        'u10','v10','skt','snowc','sp','tp','ssrd','strd',
         'fecha_actualizacion'
     ]
     
