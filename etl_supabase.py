@@ -151,7 +151,7 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                     'month': [f"{mes:02d}"],
                     'day': [f"{dia:02d}"],
                     'time': ['00:00'],
-                    'area': [14, -90, 13, -89],
+                    'area': [13, -89, 13, -89],
                 },
                 archivo_base + "0.nc"
             )
