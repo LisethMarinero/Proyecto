@@ -60,7 +60,8 @@ def crear_tablas(engine):
     nieve DOUBLE PRECISION,
     snowc DOUBLE PRECISION,
     fecha_actualizacion TEXT,
-    UNIQUE(valid_time, latitude, longitude)
+    -- (Sin clave única)
+
 """
 
         # Crear la tabla principal
@@ -258,15 +259,14 @@ def cargar_tabla_general(engine, archivo_csv):
     df.to_sql('reanalysis_era5_land_temp', engine, if_exists='replace', index=False)
     
     # Insertar en la tabla final con ON CONFLICT
+    # Insertar todos los datos (sin conflicto)
     with engine.begin() as conn:
         conn.execute(text(f"""
-            INSERT INTO reanalysis_era5_land ({', '.join(columnas_esperadas)})
-            SELECT {', '.join(columnas_esperadas)}
-            FROM reanalysis_era5_land_temp
-            ON CONFLICT (valid_time, latitude, longitude)
-            DO UPDATE SET
-                {', '.join([f"{c}=EXCLUDED.{c}" for c in columnas_esperadas if c not in ['valid_time', 'latitude', 'longitude']])};
+           INSERT INTO reanalysis_era5_land ({', '.join(columnas_esperadas)})
+           SELECT {', '.join(columnas_esperadas)}
+           FROM reanalysis_era5_land_temp;
         """))
+
 
     print("✅ Datos cargados correctamente.")
 
@@ -286,21 +286,15 @@ def distribuir_datos(engine):
 
     with engine.begin() as conn:
         for tabla, cols in tablas.items():
+            # Columnas que se insertarán
             insert_cols = cols + ["fecha_actualizacion"]
-            clave = ["valid_time", "latitude", "longitude"]
-            
-            update_cols = [f"{c}=EXCLUDED.{c}" for c in insert_cols if c not in clave and c != "fecha_actualizacion"]
-            update_cols.append("fecha_actualizacion=EXCLUDED.fecha_actualizacion")  # ✅ fecha siempre se actualiza
-
             select_cols = ", ".join(insert_cols)
 
             query = f"""
                 INSERT INTO "{tabla}" ({', '.join(insert_cols)})
                 SELECT {select_cols}
                 FROM reanalysis_era5_land
-                WHERE {cols[1]} IS NOT NULL
-                ON CONFLICT (valid_time, latitude, longitude)
-                DO UPDATE SET {', '.join(update_cols)};
+                WHERE {cols[1]} IS NOT NULL;
             """
 
             try:
