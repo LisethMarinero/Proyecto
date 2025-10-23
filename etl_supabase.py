@@ -59,7 +59,7 @@ def crear_tablas(engine):
     skt DOUBLE PRECISION,
     nieve DOUBLE PRECISION,
     snowc DOUBLE PRECISION,
-    fecha_actualizacion TEXT,
+    fecha_actualizacion TEXT
     -- (Sin clave única)
 
 """
