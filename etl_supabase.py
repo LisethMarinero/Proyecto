@@ -1,4 +1,4 @@
-# etl_supabase_v5.py
+# etl_supabase_v6.py
 import os
 import glob
 import shutil
@@ -102,7 +102,7 @@ def obtener_ultimo_dia_disponible(max_dias=10):
                     'month': [f"{mes:02d}"],
                     'day': [f"{dia:02d}"],
                     'time': ['00:00'],
-                    'area': [14, -90, 13, -89],
+                    'area': [14, -90, 13, -89],  # Área de El Salvador
                 },
                 archivo_prueba
             )
@@ -155,7 +155,7 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                     'month': [f"{mes:02d}"],
                     'day': [f"{dia:02d}"],
                     'time': ['00:00'],
-                    'area': [14, -90, 13, -89],
+                    'area': [14, -90, 13, -89],  # Área de El Salvador
                 },
                 archivo_base + "0.nc"
             )
@@ -261,6 +261,39 @@ def cargar_tabla_general(engine, archivo_csv):
         """))
 
     print("✅ Datos cargados correctamente.")
+
+
+    # --- DISTRIBUIR DATOS A TABLAS SECUNDARIAS ---
+    print("🔁 Distribuyendo datos hacia las tablas secundarias...")
+
+    tablas_y_columnas = {
+        "pressure-precipitationw8_rcxxb": ["sp", "tp"],
+        "radiation-heatcpg03hs6": ["ssrd", "strd"],
+        "skin-temperaturehke46ner": ["skt"],
+        "snowhy9lgjol": ["nieve", "snowc"],
+        "soil-waterlxqhzxz9": ["swvl1", "swvl2", "swvl3", "swvl4"],
+        "temperatureedviyn5g": ["t2m", "d2m"],
+        "temperaturepf7g_14p": ["stl1", "stl2", "stl3", "stl4"],
+        "windeh_9u766": ["u10", "v10"]
+    }
+
+    with engine.begin() as conn:
+        for tabla, columnas in tablas_y_columnas.items():
+            columnas_comunes = ['valid_time', 'latitude', 'longitude', 'fecha_actualizacion'] + columnas
+            cols = ', '.join(columnas_comunes)
+
+            conn.execute(text(f"""
+                DELETE FROM "{tabla}"
+                WHERE valid_time IN (SELECT valid_time FROM reanalysis_era5_land_temp);
+            """))
+
+            conn.execute(text(f"""
+                INSERT INTO "{tabla}" ({cols})
+                SELECT {cols}
+                FROM reanalysis_era5_land_temp;
+            """))
+
+            print(f"📦 Datos insertados/actualizados en tabla: {tabla}")
 
 
 # --- EJECUCIÓN AUTOMÁTICA ---
