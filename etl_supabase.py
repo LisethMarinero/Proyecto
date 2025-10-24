@@ -22,6 +22,7 @@ os.environ["DB_HOST"] = "aws-1-us-east-2.pooler.supabase.com"
 os.environ["DB_PORT"] = "6543"
 os.environ["DB_NAME"] = "postgres"
 
+
 # --- CONEXIÓN A SUPABASE ---
 def crear_engine():
     conexion = (
@@ -260,3 +261,34 @@ def cargar_tabla_general(engine, archivo_csv):
         """))
 
     print("✅ Datos cargados correctamente.")
+
+
+# --- EJECUCIÓN AUTOMÁTICA ---
+def main():
+    print("🚀 Iniciando proceso ETL ERA5-Land...")
+    engine = crear_engine()
+    crear_tablas(engine)
+
+    fecha = obtener_ultimo_dia_disponible()
+    if not fecha:
+        print("❌ No se pudo determinar una fecha válida. Fin del proceso.")
+        return
+
+    archivo_csv = descargar_datos_csv(fecha)
+    if not archivo_csv:
+        print("❌ No se generó archivo CSV. Fin del proceso.")
+        return
+
+    cargar_tabla_general(engine, archivo_csv)
+
+    print("🧹 Limpiando archivos temporales...")
+    for f in glob.glob("data_*.nc"):
+        os.remove(f)
+    for f in glob.glob("*.gz"):
+        os.remove(f)
+
+    print(f"🎉 ETL completado exitosamente para la fecha {fecha.strftime('%Y-%m-%d')}")
+
+
+if __name__ == "__main__":
+    main()
