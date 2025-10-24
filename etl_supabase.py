@@ -1,4 +1,4 @@
-# etl_supabase_v6.py
+# etl_supabase_v7.py
 import os
 import glob
 import shutil
@@ -61,6 +61,7 @@ def crear_tablas(engine):
             snowc DOUBLE PRECISION,
             fecha_actualizacion TEXT
         """
+
         conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
 
         tablas = [
@@ -98,7 +99,7 @@ def obtener_ultimo_dia_disponible(max_dias=10):
                     'month': [f"{mes:02d}"],
                     'day': [f"{dia:02d}"],
                     'time': ['00:00'],
-                    'area': [14, -90, 13, -89],  # Área de El Salvador
+                    'area': [14, -90, 13, -89],
                 },
                 archivo_prueba
             )
@@ -150,7 +151,7 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                     'month': [f"{mes:02d}"],
                     'day': [f"{dia:02d}"],
                     'time': ['00:00'],
-                    'area': [14, -90, 13, -89],  # Área de El Salvador
+                    'area': [14, -90, 13, -89],
                 },
                 archivo_base + "0.nc"
             )
@@ -251,10 +252,11 @@ def cargar_tabla_general(engine, archivo_csv):
     with engine.begin() as conn:
         conn.execute(text(f"""
             INSERT INTO reanalysis_era5_land ({', '.join(columnas_esperadas)})
-            SELECT {', '.join(columnas_esperadas)} FROM reanalysis_era5_land_temp;
+            SELECT {', '.join(columnas_esperadas)} FROM reanalysis_era5_land_temp
+            ON CONFLICT (valid_time, latitude, longitude) DO NOTHING;
         """))
 
-    print("✅ Datos cargados correctamente.")
+    print("✅ Datos cargados correctamente en la tabla principal.")
 
     # --- DISTRIBUIR DATOS A TABLAS SECUNDARIAS ---
     print("🔁 Distribuyendo datos hacia las tablas secundarias...")
@@ -273,18 +275,17 @@ def cargar_tabla_general(engine, archivo_csv):
     def sincronizar_tabla_secundaria(engine, tabla, columnas):
         columnas_comunes = ['valid_time', 'latitude', 'longitude', 'fecha_actualizacion'] + columnas
         cols = ', '.join(columnas_comunes)
+        unique_cols = 'valid_time, latitude, longitude'
 
         with engine.begin() as conn:
-            # Insertar solo fechas que no existen todavía en la tabla secundaria
             conn.execute(text(f"""
                 INSERT INTO "{tabla}" ({cols})
                 SELECT {cols}
                 FROM reanalysis_era5_land
-                WHERE valid_time NOT IN (SELECT valid_time FROM "{tabla}");
+                ON CONFLICT ({unique_cols}) DO NOTHING;
             """))
         print(f"📦 Tabla secundaria '{tabla}' sincronizada correctamente.")
 
-    # Sincronizar todas las tablas secundarias
     for tabla, columnas in tablas_y_columnas.items():
         sincronizar_tabla_secundaria(engine, tabla, columnas)
 
