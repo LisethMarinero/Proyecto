@@ -22,7 +22,6 @@ os.environ["DB_HOST"] = "aws-1-us-east-2.pooler.supabase.com"
 os.environ["DB_PORT"] = "6543"
 os.environ["DB_NAME"] = "postgres"
 
-
 # --- CONEXIÓN A SUPABASE ---
 def crear_engine():
     conexion = (
@@ -30,7 +29,6 @@ def crear_engine():
         f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
     )
     return create_engine(conexion, connect_args={'sslmode': 'require'})
-
 
 # --- CREAR TABLAS ---
 def crear_tablas(engine):
@@ -63,7 +61,6 @@ def crear_tablas(engine):
             snowc DOUBLE PRECISION,
             fecha_actualizacion TEXT
         """
-
         conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
 
         tablas = [
@@ -79,7 +76,6 @@ def crear_tablas(engine):
 
         for tabla in tablas:
             conn.execute(text(f"CREATE TABLE IF NOT EXISTS \"{tabla}\" ({columnas_base});"))
-
 
 # --- OBTENER ÚLTIMO DÍA DISPONIBLE ---
 def obtener_ultimo_dia_disponible(max_dias=10):
@@ -119,7 +115,6 @@ def obtener_ultimo_dia_disponible(max_dias=10):
 
     print("❌ No se encontró una fecha disponible en los últimos 10 días.")
     return None
-
 
 # --- DESCARGAR Y CONVERTIR NETCDF A CSV ---
 def descargar_datos_csv(fecha, max_reintentos=5):
@@ -231,7 +226,6 @@ def descargar_datos_csv(fecha, max_reintentos=5):
                 print("❌ Se alcanzó el máximo de reintentos. No se pudo generar CSV.")
                 return None
 
-
 # --- CARGAR Y DISTRIBUIR DATOS ---
 def cargar_tabla_general(engine, archivo_csv):
     df = pd.read_csv(archivo_csv)
@@ -262,7 +256,6 @@ def cargar_tabla_general(engine, archivo_csv):
 
     print("✅ Datos cargados correctamente.")
 
-
     # --- DISTRIBUIR DATOS A TABLAS SECUNDARIAS ---
     print("🔁 Distribuyendo datos hacia las tablas secundarias...")
 
@@ -277,24 +270,23 @@ def cargar_tabla_general(engine, archivo_csv):
         "windeh_9u766": ["u10", "v10"]
     }
 
-    with engine.begin() as conn:
-        for tabla, columnas in tablas_y_columnas.items():
-            columnas_comunes = ['valid_time', 'latitude', 'longitude', 'fecha_actualizacion'] + columnas
-            cols = ', '.join(columnas_comunes)
+    def sincronizar_tabla_secundaria(engine, tabla, columnas):
+        columnas_comunes = ['valid_time', 'latitude', 'longitude', 'fecha_actualizacion'] + columnas
+        cols = ', '.join(columnas_comunes)
 
-            conn.execute(text(f"""
-                DELETE FROM "{tabla}"
-                WHERE valid_time IN (SELECT valid_time FROM reanalysis_era5_land_temp);
-            """))
-
+        with engine.begin() as conn:
+            # Insertar solo fechas que no existen todavía en la tabla secundaria
             conn.execute(text(f"""
                 INSERT INTO "{tabla}" ({cols})
                 SELECT {cols}
-                FROM reanalysis_era5_land_temp;
+                FROM reanalysis_era5_land
+                WHERE valid_time NOT IN (SELECT valid_time FROM "{tabla}");
             """))
+        print(f"📦 Tabla secundaria '{tabla}' sincronizada correctamente.")
 
-            print(f"📦 Datos insertados/actualizados en tabla: {tabla}")
-
+    # Sincronizar todas las tablas secundarias
+    for tabla, columnas in tablas_y_columnas.items():
+        sincronizar_tabla_secundaria(engine, tabla, columnas)
 
 # --- EJECUCIÓN AUTOMÁTICA ---
 def main():
@@ -321,7 +313,6 @@ def main():
         os.remove(f)
 
     print(f"🎉 ETL completado exitosamente para la fecha {fecha.strftime('%Y-%m-%d')}")
-
 
 if __name__ == "__main__":
     main()
