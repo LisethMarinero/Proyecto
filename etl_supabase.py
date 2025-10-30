@@ -303,23 +303,17 @@ def main():
     engine = crear_engine()
     crear_tablas(engine)
 
-    fecha_inicio = datetime(2025, 10, 3, tzinfo=timezone.utc)
-    fecha_fin = obtener_ultimo_dia_disponible()
-    if not fecha_fin:
+    fecha = obtener_ultimo_dia_disponible()
+    if not fecha:
         print("❌ No se pudo determinar una fecha válida. Fin del proceso.")
         return
 
-    fecha_actual = fecha_inicio
-    while fecha_actual <= fecha_fin:
-        print(f"\n📅 Procesando fecha: {fecha_actual.strftime('%Y-%m-%d')}")
-        archivo_csv = descargar_datos_csv(fecha_actual)
-        if archivo_csv:
-            cargar_tabla_general(engine, archivo_csv)
-        else:
-            print(f"⚠️ No se generó CSV para {fecha_actual.strftime('%Y-%m-%d')}")
+    archivo_csv = descargar_datos_csv(fecha)
+    if not archivo_csv:
+        print("❌ No se generó archivo CSV. Fin del proceso.")
+        return
 
-        fecha_actual += timedelta(days=1)
-        time.sleep(5)  # evitar sobrecarga al servidor CDS
+    cargar_tabla_general(engine, archivo_csv)
 
     print("🧹 Limpiando archivos temporales...")
     for f in glob.glob("data_*.nc"):
@@ -327,8 +321,7 @@ def main():
     for f in glob.glob("*.gz"):
         os.remove(f)
 
-    print(f"🎉 ETL completado exitosamente desde {fecha_inicio.strftime('%Y-%m-%d')} hasta {fecha_fin.strftime('%Y-%m-%d')}")
-
+    print(f"🎉 ETL completado exitosamente para la fecha {fecha.strftime('%Y-%m-%d')}")
 
 if __name__ == "__main__":
     main()
