@@ -20,10 +20,14 @@ os.environ["DB_PASSWORD"] = "Hipopotamo123456"
 os.environ["DB_HOST"] = "aws-1-us-east-2.pooler.supabase.com"
 os.environ["DB_PORT"] = "6543"
 os.environ["DB_NAME"] = "postgres"
-# --- CONEXIÓN A BASE DE DATOS ---
+
 def crear_engine():
-    engine = create_engine(DB_URL)
-    return engine
+    conexion = (
+        f"postgresql+psycopg2://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@"
+        f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+    )
+    return create_engine(conexion, connect_args={'sslmode': 'require'})
+
 
 # --- CREAR TABLA PRINCIPAL ---
 def crear_tablas(engine):
