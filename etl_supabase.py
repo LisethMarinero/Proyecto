@@ -1,327 +1,108 @@
-# etl_supabase_v7.py
+# etl_supabase_v8.py
 import os
 import glob
-import shutil
-import gzip
-import cdsapi
 import pandas as pd
 import xarray as xr
+import cdsapi
 from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta, timezone
-import pytz
-import zipfile
 import time
+
+
 
 # --- CONFIGURACIÓN ---
 os.environ["CDSAPI_URL"] = "https://cds.climate.copernicus.eu/api"
 os.environ["CDSAPI_KEY"] = "da593dcf-84ac-4790-a785-9aca76da8fee"
+
 
 os.environ["DB_USER"] = "postgres.gkzvbidocktfkwhvngpg"
 os.environ["DB_PASSWORD"] = "Hipopotamo123456"
 os.environ["DB_HOST"] = "aws-1-us-east-2.pooler.supabase.com"
 os.environ["DB_PORT"] = "6543"
 os.environ["DB_NAME"] = "postgres"
-
-# --- CONEXIÓN A SUPABASE ---
+# --- CONEXIÓN A BASE DE DATOS ---
 def crear_engine():
-    conexion = (
-        f"postgresql+psycopg2://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@"
-        f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-    )
-    return create_engine(conexion, connect_args={'sslmode': 'require'})
+    engine = create_engine(DB_URL)
+    return engine
 
-# --- CREAR TABLAS ---
+# --- CREAR TABLA PRINCIPAL ---
 def crear_tablas(engine):
     with engine.begin() as conn:
-        columnas_base = """
-            id SERIAL PRIMARY KEY,
-            valid_time TEXT,
-            latitude DOUBLE PRECISION,
-            longitude DOUBLE PRECISION,
-            swvl1 DOUBLE PRECISION,
-            swvl2 DOUBLE PRECISION,
-            swvl3 DOUBLE PRECISION,
-            swvl4 DOUBLE PRECISION,
-            stl1 DOUBLE PRECISION,
-            stl2 DOUBLE PRECISION,
-            stl3 DOUBLE PRECISION,
-            stl4 DOUBLE PRECISION,
-            number BIGINT,
-            expver BIGINT,
-            sp DOUBLE PRECISION,
-            u10 DOUBLE PRECISION,
-            v10 DOUBLE PRECISION,
-            t2m DOUBLE PRECISION,
-            d2m DOUBLE PRECISION,
-            ssrd DOUBLE PRECISION,
-            strd DOUBLE PRECISION,
-            tp DOUBLE PRECISION,
-            skt DOUBLE PRECISION,
-            nieve DOUBLE PRECISION,
-            snowc DOUBLE PRECISION,
-            fecha_actualizacion TEXT
-        """
-
-        conn.execute(text(f"CREATE TABLE IF NOT EXISTS reanalysis_era5_land ({columnas_base});"))
-
-        tablas = [
-            "pressure-precipitationw8_rcxxb",
-            "radiation-heatcpg03hs6",
-            "skin-temperaturehke46ner",
-            "snowhy9lgjol",
-            "soil-waterlxqhzxz9",
-            "temperatureedviyn5g",
-            "temperaturepf7g_14p",
-            "windeh_9u766"
-        ]
-
-        for tabla in tablas:
-            conn.execute(text(f"CREATE TABLE IF NOT EXISTS \"{tabla}\" ({columnas_base});"))
-
-# --- OBTENER ÚLTIMO DÍA DISPONIBLE ---
-def obtener_ultimo_dia_disponible(max_dias=10):
-    print("🔍 Buscando la última fecha disponible de ERA5-Land...")
-    c = cdsapi.Client()
-    hoy = datetime.now(timezone.utc)
-
-    for i in range(1, max_dias + 1):
-        fecha = hoy - timedelta(days=i)
-        año, mes, dia = fecha.year, fecha.month, fecha.day
-        archivo_prueba = f"prueba_{año}_{mes:02d}_{dia:02d}.nc"
-
-        try:
-            c.retrieve(
-                'reanalysis-era5-land',
-                {
-                    'format': 'netcdf',
-                    'variable': ['2m_temperature'],
-                    'year': [str(año)],
-                    'month': [f"{mes:02d}"],
-                    'day': [f"{dia:02d}"],
-                    'time': ['00:00'],
-                    'area': [14, -90, 13, -89],
-                },
-                archivo_prueba
-            )
-
-            if os.path.getsize(archivo_prueba) < 1024:
-                raise ValueError("Archivo NC muy pequeño, posiblemente no válido")
-
-            os.remove(archivo_prueba)
-            print(f"✅ Última fecha disponible: {fecha.strftime('%Y-%m-%d')}")
-            return fecha
-
-        except Exception as e:
-            print(f"⚠️ {fecha.strftime('%Y-%m-%d')} no disponible: {e}")
-
-    print("❌ No se encontró una fecha disponible en los últimos 10 días.")
-    return None
-
-# --- DESCARGAR Y CONVERTIR NETCDF A CSV ---
-def descargar_datos_csv(fecha, max_reintentos=5):
-    año, mes, dia = fecha.year, fecha.month, fecha.day
-    archivo_csv = f"reanalysis-era5-land_{año}_{mes:02d}_{dia:02d}.csv"
-
-    if os.path.exists(archivo_csv):
-        print(f"ℹ️ CSV ya existe: {archivo_csv}")
-        return archivo_csv
-
-    reintento = 0
-    while reintento < max_reintentos:
-        try:
-            print(f"🌍 Descargando datos para {año}-{mes:02d}-{dia:02d} (Intento {reintento + 1})...")
-            c = cdsapi.Client()
-            archivo_base = f"data_{año}_{mes:02d}_{dia:02d}_"
-
-            c.retrieve(
-                'reanalysis-era5-land',
-                {
-                    'format': 'netcdf',
-                    'variable': [
-                        "2m_temperature", "2m_dewpoint_temperature", "surface_pressure",
-                        "total_precipitation", "surface_solar_radiation_downwards",
-                        "surface_thermal_radiation_downwards", "skin_temperature",
-                        "snowc", "volumetric_soil_water_layer_1", "volumetric_soil_water_layer_2",
-                        "volumetric_soil_water_layer_3", "volumetric_soil_water_layer_4",
-                        "soil_temperature_level_1", "soil_temperature_level_2",
-                        "soil_temperature_level_3", "soil_temperature_level_4",
-                        "10m_u_component_of_wind", "10m_v_component_of_wind"
-                    ],
-                    'year': [str(año)],
-                    'month': [f"{mes:02d}"],
-                    'day': [f"{dia:02d}"],
-                    'time': ['00:00'],
-                    'area': [14, -90, 13, -89],
-                },
-                archivo_base + "0.nc"
-            )
-
-            time.sleep(5)
-            archivos_nc = sorted(glob.glob("data_*.nc"))
-            if not archivos_nc:
-                raise ValueError("❌ No se descargaron archivos NetCDF válidos")
-
-            datasets = []
-            for f in archivos_nc:
-                if zipfile.is_zipfile(f):
-                    with zipfile.ZipFile(f, 'r') as zip_ref:
-                        zip_ref.extractall(".")
-                        f = zip_ref.namelist()[0]
-                elif f.endswith(".gz"):
-                    archivo_descomprimido = f.replace(".gz", "")
-                    with gzip.open(f, 'rb') as f_in:
-                        with open(archivo_descomprimido, 'wb') as f_out:
-                            shutil.copyfileobj(f_in, f_out)
-                    f = archivo_descomprimido
-
-                if os.path.getsize(f) < 1024:
-                    raise ValueError(f"Archivo NC muy pequeño o inválido: {f}")
-
-                ds = xr.open_dataset(f, engine="netcdf4")
-                datasets.append(ds)
-
-            ds_total = xr.merge(datasets)
-            df = ds_total.to_dataframe().reset_index()
-            df.columns = [col.lower().strip().replace(" ", "_") for col in df.columns]
-            df.rename(columns={
-                "skin_temperature": "skt",
-                "snowc": "nieve",
-                "2m_temperature": "t2m",
-                "2m_dewpoint_temperature": "d2m",
-                "surface_pressure": "sp",
-                "total_precipitation": "tp",
-                "surface_solar_radiation_downwards": "ssrd",
-                "surface_thermal_radiation_downwards": "strd",
-                "volumetric_soil_water_layer_1": "swvl1",
-                "volumetric_soil_water_layer_2": "swvl2",
-                "volumetric_soil_water_layer_3": "swvl3",
-                "volumetric_soil_water_layer_4": "swvl4",
-                "soil_temperature_level_1": "stl1",
-                "soil_temperature_level_2": "stl2",
-                "soil_temperature_level_3": "stl3",
-                "soil_temperature_level_4": "stl4",
-                "10m_u_component_of_wind": "u10",
-                "10m_v_component_of_wind": "v10"
-            }, inplace=True)
-
-            df["fecha_actualizacion"] = datetime.now(pytz.UTC)
-            df.to_csv(archivo_csv, index=False)
-            print(f"✅ CSV generado: {archivo_csv}")
-
-            for ds, f in zip(datasets, archivos_nc):
-                ds.close()
-                if os.path.exists(f):
-                    os.remove(f)
-
-            return archivo_csv
-
-        except Exception as e:
-            print(f"❌ Error durante descarga/conversión: {e}")
-            for f in glob.glob("data_*.nc"):
-                os.remove(f)
-            reintento += 1
-            if reintento < max_reintentos:
-                print(f"🔁 Reintentando descarga... ({reintento}/{max_reintentos})")
-                time.sleep(10)
-            else:
-                print("❌ Se alcanzó el máximo de reintentos. No se pudo generar CSV.")
-                return None
-
-# --- CARGAR Y DISTRIBUIR DATOS ---
-def cargar_tabla_general(engine, archivo_csv):
-    df = pd.read_csv(archivo_csv)
-
-    columnas_esperadas = [
-        'valid_time', 'latitude', 'longitude', 't2m', 'd2m',
-        'stl1', 'stl2', 'stl3', 'stl4',
-        'swvl1', 'swvl2', 'swvl3', 'swvl4',
-        'u10', 'v10', 'skt', 'nieve', 'snowc',
-        'sp', 'tp', 'ssrd', 'strd', 'fecha_actualizacion'
-    ]
-
-    for col in columnas_esperadas:
-        if col not in df.columns:
-            df[col] = pd.NA
-
-    columnas_float = [c for c in columnas_esperadas if c not in ['valid_time', 'fecha_actualizacion']]
-    for col in columnas_float:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    df.to_sql('reanalysis_era5_land_temp', engine, if_exists='replace', index=False)
-
-    with engine.begin() as conn:
-        conn.execute(text(f"""
-            INSERT INTO reanalysis_era5_land ({', '.join(columnas_esperadas)})
-            SELECT {', '.join(columnas_esperadas)} FROM reanalysis_era5_land_temp
-            ON CONFLICT (valid_time, latitude, longitude) DO NOTHING;
+        conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS "temperatureedviyn5g" (
+            valid_time TIMESTAMP,
+            latitude FLOAT,
+            longitude FLOAT,
+            t2m FLOAT,
+            d2m FLOAT,
+            fecha_actualizacion TIMESTAMP,
+            PRIMARY KEY (valid_time, latitude, longitude)
+        );
         """))
 
-    print("✅ Datos cargados correctamente en la tabla principal.")
+# --- DESCARGAR DATOS ERA5-LAND ---
+def descargar_datos_csv(fecha):
+    fecha_str = fecha.strftime("%Y-%m-%d")
+    print(f"📥 Descargando datos de ERA5-Land para {fecha_str}...")
 
-    # --- DISTRIBUIR DATOS A TABLAS SECUNDARIAS ---
-    print("🔁 Distribuyendo datos hacia las tablas secundarias...")
+    c = cdsapi.Client()
+    archivo_nc = f"data_{fecha_str}.nc"
 
-    tablas_y_columnas = {
-        "pressure-precipitationw8_rcxxb": ["sp", "tp"],
-        "radiation-heatcpg03hs6": ["ssrd", "strd"],
-        "skin-temperaturehke46ner": ["skt"],
-        "snowhy9lgjol": ["nieve", "snowc"],
-        "soil-waterlxqhzxz9": ["swvl1", "swvl2", "swvl3", "swvl4"],
-        "temperatureedviyn5g": ["t2m", "d2m"],
-        "temperaturepf7g_14p": ["stl1", "stl2", "stl3", "stl4"],
-        "windeh_9u766": ["u10", "v10"]
-    }
+    c.retrieve(
+        "reanalysis-era5-land",
+        {
+            "variable": ["2m_temperature", "2m_dewpoint_temperature"],
+            "year": [str(fecha.year)],
+            "month": [f"{fecha.month:02d}"],
+            "day": [f"{fecha.day:02d}"],
+            "time": [f"{h:02d}:00" for h in range(24)],
+            "format": "netcdf",
+            "area": [14.45, -90.13, 12.98, -87.68],  # El Salvador
+        },
+        archivo_nc,
+    )
 
-    # --- FUNCIÓN INTERNA ---
-    def sincronizar_tabla_secundaria(engine, tabla, columnas):
-        columnas_comunes = ['valid_time', 'latitude', 'longitude', 'fecha_actualizacion'] + columnas
-        cols = ', '.join(columnas_comunes)
+    # Convertir NetCDF a CSV
+    ds = xr.open_dataset(archivo_nc)
+    df = ds.to_dataframe().reset_index()
+    df["fecha_actualizacion"] = datetime.now(timezone.utc)
+    archivo_csv = f"data_{fecha_str}.csv"
+    df.to_csv(archivo_csv, index=False)
+    print(f"✅ CSV generado: {archivo_csv}")
+    return archivo_csv
 
-        with engine.begin() as conn:
-            conn.execute(text(f"""
-                INSERT INTO "{tabla}" ({cols})
-                SELECT {cols}
-                FROM reanalysis_era5_land AS r
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM "{tabla}" AS s
-                    WHERE s.valid_time = r.valid_time
-                      AND s.latitude = r.latitude
-                      AND s.longitude = r.longitude
-                );
-            """))
-        print(f"📦 Tabla secundaria '{tabla}' sincronizada correctamente.")
+# --- CARGAR DATOS EN BASE DE DATOS ---
+def cargar_tabla_general(engine, archivo_csv):
+    df = pd.read_csv(archivo_csv)
+    if "t2m" in df.columns:
+        df["t2m"] = df["t2m"] - 273.15  # Kelvin → Celsius
+    if "d2m" in df.columns:
+        df["d2m"] = df["d2m"] - 273.15
 
-    # --- LLAMADA A LA FUNCIÓN PARA CADA TABLA ---
-    for tabla, columnas in tablas_y_columnas.items():
-        sincronizar_tabla_secundaria(engine, tabla, columnas)
-        
+    df.to_sql("temperatureedviyn5g", engine, if_exists="append", index=False, method="multi", chunksize=500)
+    print(f"✅ Datos cargados en 'temperatureedviyn5g'.")
 
-# --- EJECUCIÓN AUTOMÁTICA ---
+# --- EJECUCIÓN PRINCIPAL ---
 def main():
-    print("🚀 Iniciando proceso ETL ERA5-Land...")
     engine = crear_engine()
     crear_tablas(engine)
 
-    fecha = obtener_ultimo_dia_disponible()
-    if not fecha:
-        print("❌ No se pudo determinar una fecha válida. Fin del proceso.")
-        return
+    fecha_inicio = datetime(2025, 10, 3, tzinfo=timezone.utc)
+    fecha_fin = datetime(2025, 10, 24, tzinfo=timezone.utc)
+    fecha_actual = fecha_inicio
 
-    archivo_csv = descargar_datos_csv(fecha)
-    if not archivo_csv:
-        print("❌ No se generó archivo CSV. Fin del proceso.")
-        return
+    while fecha_actual <= fecha_fin:
+        try:
+            archivo_csv = descargar_datos_csv(fecha_actual)
+            cargar_tabla_general(engine, archivo_csv)
+            print(f"🎉 ETL completado para {fecha_actual.strftime('%Y-%m-%d')}")
+        except Exception as e:
+            print(f"❌ Error en {fecha_actual.strftime('%Y-%m-%d')}: {e}")
 
-    cargar_tabla_general(engine, archivo_csv)
+        fecha_actual += timedelta(days=1)
+        time.sleep(5)  # evitar sobrecarga al servidor CDS
 
-    print("🧹 Limpiando archivos temporales...")
-    for f in glob.glob("data_*.nc"):
-        os.remove(f)
-    for f in glob.glob("*.gz"):
-        os.remove(f)
-
-    print(f"🎉 ETL completado exitosamente para la fecha {fecha.strftime('%Y-%m-%d')}")
+    print("\n🧹 ETL completado para el rango del 3 al 24 de octubre de 2025.")
 
 if __name__ == "__main__":
     main()
