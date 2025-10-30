@@ -273,21 +273,24 @@ def cargar_tabla_general(engine, archivo_csv):
     }
 
     def sincronizar_tabla_secundaria(engine, tabla, columnas):
-        columnas_comunes = ['valid_time', 'latitude', 'longitude', 'fecha_actualizacion'] + columnas
-        cols = ', '.join(columnas_comunes)
-        unique_cols = 'valid_time, latitude, longitude'
+    columnas_comunes = ['valid_time', 'latitude', 'longitude', 'fecha_actualizacion'] + columnas
+    cols = ', '.join(columnas_comunes)
 
-        with engine.begin() as conn:
-            conn.execute(text(f"""
-                INSERT INTO "{tabla}" ({cols})
-                SELECT {cols}
-                FROM reanalysis_era5_land
-                ON CONFLICT ({unique_cols}) DO NOTHING;
-            """))
-        print(f"📦 Tabla secundaria '{tabla}' sincronizada correctamente.")
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            INSERT INTO "{tabla}" ({cols})
+            SELECT {cols}
+            FROM reanalysis_era5_land AS r
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM "{tabla}" AS s
+                WHERE s.valid_time = r.valid_time
+                  AND s.latitude = r.latitude
+                  AND s.longitude = r.longitude
+            );
+        """))
+    print(f"📦 Tabla secundaria '{tabla}' sincronizada correctamente.")
 
-    for tabla, columnas in tablas_y_columnas.items():
-        sincronizar_tabla_secundaria(engine, tabla, columnas)
 
 # --- EJECUCIÓN AUTOMÁTICA ---
 def main():
